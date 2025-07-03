@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h1>Panel administracyjny</h1>
+<p>Liczba komputerów: <strong>{{ computers_count }}</strong></p>
+<p>Zadania oczekujące: <strong>{{ pending_tasks }}</strong></p>
+
+<h2>Ostatnie raporty</h2>
+<table>
+    <thead>
+        <tr><th>Komputer</th><th>Data raportu</th></tr>
+    </thead>
+    <tbody>
+        {% for r in last_reports %}
+        <tr>
+            <td>{{ r.computer.hostname }}</td>
+            <td>{{ r.report_timestamp }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="2">Brak raportów</td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

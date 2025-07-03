@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Generator agenta</h1>
+<form method="post">
+    {{ form.hidden_tag() }}
+    <div>
+        {{ form.service_mode.label }} {{ form.service_mode() }}
+    </div>
+    <div>
+        {{ form.submit() }}
+    </div>
+</form>
+{% endblock %}

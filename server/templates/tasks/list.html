@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Zadania{% endblock %}
+{% block content %}
+<h1>Zadania</h1>
+<a href="{{ url_for('tasks.create_task') }}">Nowe zadanie</a>
+
+<input type="text" id="search" placeholder="Filtruj komputery...">
+
+<table>
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Komputer (hostname)</th>
+            <th>Komenda</th>
+            <th>Payload</th>
+            <th>Status</th>
+            <th>Utworzone</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for task in tasks %}
+        <tr>
+            <td><a href="{{ url_for('tasks.task_details', task_id=task.id) }}">{{ task.id }}</a></td>
+            <td>{{ task.computer.hostname if task.computer else 'Brak' }}</td>
+            <td>{{ task.command }}</td>
+            <td>{{ task.payload }}</td>
+            <td>{{ task.status }}</td>
+            <td>{{ task.created_at or '' }}</td>
+        </tr>
+    {% else %}
+        <tr><td colspan="6">Brak zadań</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+<script>
+document.getElementById('search').addEventListener('input', function() {
+    let val = this.value.toLowerCase();
+    document.querySelectorAll('tbody tr').forEach(tr => {
+        tr.style.display = tr.innerText.toLowerCase().includes(val) ? '' : 'none';
+    });
+});
+</script>
+
+{% endblock %}

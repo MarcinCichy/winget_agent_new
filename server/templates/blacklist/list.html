@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Czarna lista</h1>
+<form method="post">
+    {{ form.hidden_tag() }}
+    {{ form.keyword.label }} {{ form.keyword() }}
+    {{ form.submit() }}
+</form>
+<ul>
+    {% for item in blacklist %}
+        <li>{{ item.keyword }}</li>
+    {% endfor %}
+</ul>
+{% endblock %}
