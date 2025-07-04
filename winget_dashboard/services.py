@@ -4,7 +4,6 @@ import shutil
 import subprocess
 import tempfile
 import logging
-import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -20,13 +19,16 @@ class AgentGenerator:
             logging.error("Program 'pyinstaller' nie jest zainstalowany lub nie ma go w ścieżce PATH.")
             raise FileNotFoundError("PyInstaller nie jest dostępny na serwerze.")
 
+        # Zapewnienie, że ścieżka do winget jest poprawnie sformatowana dla Pythona
+        winget_path = config.get('winget_path', '').replace('\\', '\\\\')
+
         final_agent_code = self.template \
             .replace('__API_ENDPOINT_1__', config.get('api_endpoint_1', '')) \
             .replace('__API_ENDPOINT_2__', config.get('api_endpoint_2', '')) \
             .replace('__API_KEY__', config.get('api_key', '')) \
             .replace('__LOOP_INTERVAL__', str(config.get('loop_interval', 60))) \
-            .replace('__REPORT_INTERVAL__', str(config.get('report_interval', 60))) \
-            .replace('__WINGET_PATH__', config.get('winget_path', ''))
+            .replace('__REPORT_INTERVAL__', str(config.get('report_interval', 3600))) \
+            .replace('__WINGET_PATH__', winget_path)
 
         build_dir = tempfile.mkdtemp(prefix="winget-agent-build-")
         script_path = os.path.join(build_dir, "agent_service.py")
@@ -34,10 +36,11 @@ class AgentGenerator:
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(final_agent_code)
 
+        # Zmieniono --name na 'agent'
         command = [
-            "pyinstaller", "--onefile", "--noconsole",
+            "pyinstaller", "--onefile",
             "--hidden-import=win32timezone",
-            "--name", "WingetAgentService",
+            "--name", "agent",
             script_path
         ]
 
@@ -47,20 +50,18 @@ class AgentGenerator:
                                     cwd=build_dir)
             logging.info(f"PyInstaller output: {result.stdout}")
 
-            output_exe_path = os.path.join(build_dir, 'dist', 'WingetAgentService.exe')
+            # Zmieniono nazwę oczekiwanego pliku
+            output_exe_path = os.path.join(build_dir, 'dist', 'agent.exe')
             if not os.path.exists(output_exe_path):
-                raise FileNotFoundError(f"PyInstaller nie stworzył pliku .exe. Log: {result.stderr}")
+                raise FileNotFoundError(f"PyInstaller nie stworzył pliku agent.exe. Log: {result.stderr}")
 
-            final_path = os.path.join(tempfile.gettempdir(), f"agent_{os.urandom(4).hex()}.exe")
-            shutil.move(output_exe_path, final_path)
-
-            return final_path
+            return output_exe_path
 
         except subprocess.CalledProcessError as e:
             logging.error(f"Błąd kompilacji PyInstaller: {e.stderr}")
-            raise
-        finally:
+            # Usuń katalog tymczasowy nawet w przypadku błędu
             shutil.rmtree(build_dir, ignore_errors=True)
+            raise
 
 
 class ReportGenerator:

@@ -1,283 +1,184 @@
 # agent_template.py.txt
-import subprocess
-import json
-import time
-import socket
-import logging
+import sys
 import os
+import time
+import logging
+import socket
+import json
+import subprocess
 import requests
+
 import servicemanager
-import win32event
-import win32service
 import win32serviceutil
+import win32service
+import win32event
+import pywintypes
 
-# --- Konfiguracja Agenta (zostanie wstrzyknięta przez serwer) ---
-API_ENDPOINTS = ["__API_ENDPOINT_1__", "__API_ENDPOINT_2__"]
+# --- Konfiguracja wstrzykiwana ---
+API_ENDPOINTS = [ep.strip() for ep in ["__API_ENDPOINT_1__", "__API_ENDPOINT_2__"] if ep and ep.strip()]
 API_KEY = "__API_KEY__"
-LOOP_INTERVAL = __LOOP_INTERVAL__  # Czas (w sek) między pętlami sprawdzania zadań
-REPORT_INTERVAL = __REPORT_INTERVAL__ # Czas (w sek) między pełnymi raportami
-WINGET_PATH = r"__WINGET_PATH__"
+LOOP_INTERVAL = int("__LOOP_INTERVAL__")
+REPORT_INTERVAL = int("__REPORT_INTERVAL__")
+# WINGET_PATH_CONF jest już nieużywany, ale zostawiamy placeholder
+WINGET_PATH_CONF = r"__WINGET_PATH__"
 
-# --- Konfiguracja Logowania ---
-LOG_DIR = os.path.join(os.environ['PROGRAMDATA'], 'WingetAgent')
-if not os.path.exists(LOG_DIR):
-    os.makedirs(LOG_DIR)
-LOG_FILE = os.path.join(LOG_DIR, 'agent.log')
-logging.basicConfig(
-    filename=LOG_FILE,
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+# --- Klasy logiki ---
 
-# --- Klasy Logiki Agenta ---
-
-class ApiClient:
-    """Obsługuje komunikację z serwerem dashboardu."""
-    def __init__(self, endpoints, api_key):
-        self.endpoints = [ep for ep in endpoints if ep]
-        self.headers = {'X-API-Key': api_key, 'Content-Type': 'application/json'}
-        self.active_endpoint = self._get_active_endpoint()
-
-    def _get_active_endpoint(self):
-        for endpoint in self.endpoints:
-            try:
-                response = requests.get(f"{endpoint}/api/settings/blacklist", headers=self.headers, timeout=5)
-                if response.status_code == 200:
-                    logging.info(f"Pomyślnie połączono z endpointem: {endpoint}")
-                    return endpoint
-            except requests.RequestException:
-                logging.warning(f"Nie udało się połączyć z endpointem: {endpoint}")
-        logging.error("Nie udało się połączyć z żadnym z podanych endpointów API.")
-        return None
-
-    def _request(self, method, path, **kwargs):
-        if not self.active_endpoint:
-            self.active_endpoint = self._get_active_endpoint()
-            if not self.active_endpoint:
-                raise ConnectionError("Brak aktywnego połączenia z API.")
-
-        url = f"{self.active_endpoint}{path}"
+class CommandRunner:
+    @staticmethod
+    def run(command: str):
         try:
-            response = requests.request(method, url, headers=self.headers, timeout=30, **kwargs)
-            response.raise_for_status()
-            return response
-        except requests.RequestException as e:
-            logging.error(f"Błąd komunikacji z API ({url}): {e}")
-            # Spróbuj przełączyć na inny endpoint
-            self.active_endpoint = self._get_active_endpoint()
-            if not self.active_endpoint:
-                raise ConnectionError("Utracono połączenie z API, brak alternatyw.") from e
-            # Ponów zapytanie z nowym endpointem
-            url = f"{self.active_endpoint}{path}"
-            response = requests.request(method, url, headers=self.headers, timeout=30, **kwargs)
-            response.raise_for_status()
-            return response
-
-    def get_blacklist(self):
-        return self._request('get', '/api/settings/blacklist').json()
-
-    def send_report(self, data):
-        self._request('post', '/api/report', data=json.dumps(data))
-
-    def get_tasks(self, hostname):
-        return self._request('get', f'/api/tasks/{hostname}').json()
-
-    def send_task_result(self, task_id, status, output):
-        payload = {'task_id': task_id, 'status': status, 'output': output}
-        self._request('post', '/api/tasks/result', data=json.dumps(payload))
-
-class WingetManager:
-    """Zarządza operacjami winget."""
-    def __init__(self, winget_path, blacklist):
-        self.winget_path = winget_path
-        self.blacklist = [item.lower() for item in blacklist]
-
-    def _run_command(self, args):
-        command = [self.winget_path] + args + ['--accept-source-agreements', '--accept-package-agreements']
-        logging.info(f"Wykonywanie komendy: {' '.join(command)}")
-        try:
-            result = subprocess.run(command, capture_output=True, text=True, check=True, encoding='utf-8', errors='ignore')
+            full_command = f"$ProgressPreference = 'SilentlyContinue'; {command}"
+            result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", full_command],
+                capture_output=True, text=True, check=True, encoding='utf-8',
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
             return result.stdout
         except subprocess.CalledProcessError as e:
-            logging.error(f"Błąd wykonania winget: {e.stderr}")
-            return e.stderr
+            error_details = f"Exit Code: {e.returncode}\nSTDOUT: {e.stdout}\nSTDERR: {e.stderr}"
+            logging.error(f"Błąd wykonania polecenia: {command}\n{error_details}")
+            return None
 
-    def _parse_list_output(self, output):
-        apps = []
-        lines = output.strip().split('\n')
-        if len(lines) < 2: return []
+class ApiClient:
+    def __init__(self, endpoints, api_key): self.endpoints = endpoints; self.headers = {'X-API-Key': api_key, 'Content-Type': 'application/json'}
+    def _request(self, method, path, **kwargs):
+        for endpoint in self.endpoints:
+            try: response = requests.request(method, f"{endpoint}{path}", headers=self.headers, timeout=30, **kwargs); response.raise_for_status(); return response
+            except requests.RequestException as e: logging.warning(f"Błąd komunikacji z {endpoint}{path}: {e}")
+        raise ConnectionError("Nie udało się połączyć z żadnym z serwerów API.")
+    def get_blacklist(self): return self._request('get', '/api/settings/blacklist').json()
+    def send_report(self, data): self._request('post', '/api/report', data=json.dumps(data))
+    def get_tasks(self, hostname): return self._request('get', f'/api/tasks/{hostname}').json()
+    def send_task_result(self, task_id, status): self._request('post', '/api/tasks/result', data=json.dumps({'task_id': task_id, 'status': status}))
 
-        header = lines[0]
-        id_col_end = header.find("Wersja")
-        version_col_end = header.find("Dostępne")
+class WingetManager:
+    def _run_winget(self, args):
+        command = f'winget {args} --accept-source-agreements --disable-interactivity'
+        return CommandRunner.run(command)
 
-        for line in lines[2:]:
-            name = line[:id_col_end].strip()
-            app_id = line[id_col_end:version_col_end].strip() # To jest ID, nie wersja w tym widoku
-            if any(keyword in name.lower() for keyword in self.blacklist):
-                continue
-            apps.append({'name': name, 'id': app_id})
+    def _parse_winget_output(self, output):
+        if not output: return []
+        apps, header_found = [], False
+        for line in output.strip().split('\n'):
+            if 'Name' in line and 'Id' in line: header_found = True; continue
+            if not header_found or not line.strip() or line.startswith('---'): continue
+            parts = [p for p in line.split('  ') if p.strip()]
+            try:
+                app = {'name': parts[0].strip()}
+                if len(parts) > 2: # list or upgrade
+                    app.update({'id': parts[1].strip(), 'version': parts[2].strip()})
+                if len(parts) > 3: # upgrade
+                    app.update({'available_version': parts[3].strip()})
+                apps.append(app)
+            except IndexError:
+                logging.warning(f"Pominięto linię winget podczas parsowania: {line}")
         return apps
 
-    def _parse_upgrade_output(self, output):
-        updates = []
-        lines = output.strip().split('\n')
-        if len(lines) < 2: return []
-
-        header = lines[0]
-        name_col_end = header.find("Identyfikator")
-        id_col_end = header.find("Wersja")
-        version_col_end = header.find("Dostępne")
-        source_col_end = header.find("Źródło")
-
-        for line in lines[2:]:
-            name = line[:name_col_end].strip()
-            app_id = line[name_col_end:id_col_end].strip()
-            current_version = line[id_col_end:version_col_end].strip()
-            available_version = line[version_col_end:source_col_end].strip()
-
-            if any(keyword in name.lower() for keyword in self.blacklist):
-                continue
-
-            updates.append({
-                'name': name, 'id': app_id,
-                'current_version': current_version,
-                'available_version': available_version,
-                'update_type': 'Aktualizacja'
-            })
-        return updates
-
-    def get_installed_apps(self):
-        output = self._run_command(['list'])
-        return self._parse_list_output(output)
+    def get_installed_apps(self, blacklist):
+        output = self._run_winget('list')
+        all_apps = self._parse_winget_output(output)
+        return [app for app in all_apps if not any(keyword in app['name'].lower() for keyword in blacklist)] if all_apps else []
 
     def get_available_updates(self):
-        output = self._run_command(['upgrade'])
-        return self._parse_upgrade_output(output)
+        output = self._run_winget('upgrade')
+        return self._parse_winget_output(output)
 
     def execute_task(self, command, payload):
-        if command == 'install':
-            return self._run_command(['install', '--id', payload['app_id'], '-e'])
-        elif command == 'uninstall':
-            return self._run_command(['uninstall', '--id', payload['app_id'], '-e'])
-        elif command == 'upgrade':
-            return self._run_command(['upgrade', '--id', payload['app_id'], '-e'])
-        return "Nieznana komenda"
+        if command == 'update_package':
+            return self._run_winget(f'upgrade --id "{payload}" --accept-package-agreements') is not None
+        elif command == 'uninstall_package':
+            return self._run_winget(f'uninstall --id "{payload}" --silent --accept-package-agreements') is not None
+        return False
 
 class SystemInfo:
-    """Zbiera informacje o systemie."""
     @staticmethod
-    def get_hostname():
-        return socket.gethostname()
-
+    def get_hostname(): return socket.gethostname()
     @staticmethod
-    def get_ip_address():
-        try:
-            return socket.gethostbyname(socket.gethostname())
-        except socket.gaierror:
-            return "127.0.0.1"
-
+    def get_active_ip():
+        try: s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.connect(("8.8.8.8", 80)); ip = s.getsockname()[0]; s.close(); return ip
+        except Exception: return "127.0.0.1"
     @staticmethod
     def is_reboot_required():
-        # Prost sprawdzanie, można rozbudować
-        return os.path.exists("C:\\Windows\\WinSxS\\reboot.xml")
-
-# --- Główna Logika Agenta ---
+        output = CommandRunner.run("(New-Object -ComObject Microsoft.Update.SystemInfo).RebootRequired")
+        return "true" in str(output).lower()
 
 class Agent:
     def __init__(self):
         self.hostname = SystemInfo.get_hostname()
         self.api_client = ApiClient(API_ENDPOINTS, API_KEY)
+        self.winget_manager = WingetManager()
+        self.blacklist = []
         self.last_report_time = 0
 
     def run_full_report(self):
         logging.info("Rozpoczynanie pełnego raportu...")
         try:
-            blacklist = self.api_client.get_blacklist()
-            winget = WingetManager(WINGET_PATH, blacklist)
-
+            self.blacklist = self.api_client.get_blacklist()
             report_data = {
-                "hostname": self.hostname,
-                "ip_address": SystemInfo.get_ip_address(),
+                "hostname": self.hostname, "ip_address": SystemInfo.get_active_ip(),
                 "reboot_required": SystemInfo.is_reboot_required(),
-                "installed_apps": winget.get_installed_apps(),
-                "available_updates": winget.get_available_updates()
+                "installed_apps": self.winget_manager.get_installed_apps(self.blacklist),
+                "available_app_updates": self.winget_manager.get_available_updates(), "pending_os_updates": []
             }
             self.api_client.send_report(report_data)
             self.last_report_time = time.time()
             logging.info("Pełny raport wysłany pomyślnie.")
         except Exception as e:
-            logging.error(f"Błąd podczas generowania lub wysyłania raportu: {e}")
+            logging.error(f"Błąd krytyczny podczas wysyłania raportu: {e}")
 
     def check_and_execute_tasks(self):
-        logging.info("Sprawdzanie dostępności nowych zadań...")
+        logging.info("Sprawdzanie dostępności zadań...")
         try:
             tasks = self.api_client.get_tasks(self.hostname)
-            if not tasks:
-                logging.info("Brak nowych zadań.")
-                return
-
-            blacklist = self.api_client.get_blacklist()
-            winget = WingetManager(WINGET_PATH, blacklist)
+            if not tasks: logging.info("Brak nowych zadań."); return
 
             for task in tasks:
-                logging.info(f"Wykonywanie zadania ID {task['id']}: {task['command']} {task['payload']}")
-                try:
-                    payload = json.loads(task['payload'])
-                    output = winget.execute_task(task['command'], payload)
-                    self.api_client.send_task_result(task['id'], 'wykonane', output)
-                    logging.info(f"Zadanie ID {task['id']} wykonane pomyślnie.")
-                except Exception as e:
-                    logging.error(f"Błąd podczas wykonywania zadania ID {task['id']}: {e}")
-                    self.api_client.send_task_result(task['id'], 'błąd', str(e))
+                command, payload, task_id = task['command'], task['payload'], task['id']
+                logging.info(f"Otrzymano zadanie ID {task_id}: {command}")
+                if command == 'force_report':
+                    self.run_full_report(); self.api_client.send_task_result(task_id, 'zakończone'); continue
+
+                success = self.winget_manager.execute_task(command, payload)
+                self.api_client.send_task_result(task_id, 'zakończone' if success else 'błąd')
         except Exception as e:
-            logging.error(f"Błąd podczas pobierania lub przetwarzania zadań: {e}")
+            logging.error(f"Błąd podczas przetwarzania zadań: {e}")
+
+class AgentService(win32serviceutil.ServiceFramework):
+    _svc_name_ = 'WingetDashboardAgent'
+    _svc_display_name_ = 'Winget Dashboard Agent'
+    _svc_description_ = 'Agent do zarządzania oprogramowaniem przez Winget Dashboard.'
+    def __init__(self, args): win32serviceutil.ServiceFramework.__init__(self, args); self.hWaitStop = win32event.CreateEvent(None, 0, 0, None); self.is_running = True; self.agent = None
+    def _setup_logging(self): log_dir = os.path.join(os.environ.get("ProgramData", "C:/"), "WingetAgent"); os.makedirs(log_dir, exist_ok=True); logging.basicConfig(filename=os.path.join(log_dir, 'agent.log'), level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    def SvcStop(self): self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING); win32event.SetEvent(self.hWaitStop); self.is_running = False
+    def SvcDoRun(self):
+        self._setup_logging()
+        servicemanager.LogMsg(servicemanager.EVENTLOG_INFORMATION_TYPE, servicemanager.PYS_SERVICE_STARTED, (self._svc_name_, ''))
+        try: self.agent = Agent(); self.main_loop()
+        except Exception as e: logging.critical(f"Krytyczny błąd uniemożliwiający uruchomienie agenta: {e}"); self.SvcStop()
 
     def main_loop(self):
-        while True:
-            # Sprawdź, czy nadszedł czas na pełny raport
-            if (time.time() - self.last_report_time) > REPORT_INTERVAL:
-                self.run_full_report()
-
-            # Zawsze sprawdzaj zadania
-            self.check_and_execute_tasks()
-
-            # Czekaj na kolejną pętlę
-            time.sleep(LOOP_INTERVAL)
-
-# --- Implementacja Usługi Windows ---
-
-class WingetAgentService(win32serviceutil.ServiceFramework):
-    _svc_name_ = "WingetAgentService"
-    _svc_display_name_ = "Winget Dashboard Agent Service"
-    _svc_description_ = "Agent do zarządzania oprogramowaniem przez Winget Dashboard."
-
-    def __init__(self, args):
-        win32serviceutil.ServiceFramework.__init__(self, args)
-        self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)
-        socket.setdefaulttimeout(60)
-        self.agent = Agent()
-        self.is_running = True
-
-    def SvcStop(self):
-        self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
-        win32event.SetEvent(self.hWaitStop)
-        self.is_running = False
-
-    def SvcDoRun(self):
-        servicemanager.LogMsg(servicemanager.EVENTLOG_INFORMATION_TYPE,
-                              servicemanager.PYS_SERVICE_STARTED,
-                              (self._svc_name_, ''))
-        self.main()
-
-    def main(self):
-        logging.info("Usługa agenta została uruchomiona.")
-        try:
-            self.agent.main_loop()
-        except Exception as e:
-            logging.critical(f"Krytyczny błąd w głównej pętli agenta: {e}", exc_info=True)
-        logging.info("Usługa agenta została zatrzymana.")
-
+        logging.info("Uruchomiono główną pętlę agenta.")
+        self.agent.run_full_report()
+        while self.is_running:
+            rc = win32event.WaitForSingleObject(self.hWaitStop, LOOP_INTERVAL * 1000)
+            if rc == win32event.WAIT_OBJECT_0: break
+            try:
+                self.agent.check_and_execute_tasks()
+                if (time.time() - self.agent.last_report_time) >= REPORT_INTERVAL: self.agent.run_full_report()
+            except Exception as e: logging.error(f"Nieoczekiwany błąd w pętli: {e}"); time.sleep(60)
+        logging.info("Zakończono główną pętlę agenta.")
 
 if __name__ == '__main__':
-    win32serviceutil.HandleCommandLine(WingetAgentService)
+    if len(sys.argv) == 1:
+        servicemanager.Initialize(); servicemanager.PrepareToHostSingle(AgentService); servicemanager.StartServiceCtrlDispatcher()
+    else:
+        try:
+            command = sys.argv[1].lower()
+            win32serviceutil.HandleCommandLine(AgentService)
+            if command == 'install': print(f"Usługa '{AgentService._svc_name_}' została pomyślnie zainstalowana.")
+            elif command == 'start': print(f"Usługa '{AgentService._svc_name_}' została uruchomiona.")
+            elif command == 'stop': print(f"Usługa '{AgentService._svc_name_}' została zatrzymana.")
+            elif command == 'remove': print(f"Usługa '{AgentService._svc_name_}' została usunięta.")
+        except pywintypes.error as e:
+            print(f"Błąd operacji na usłudze (być może już istnieje/nie istnieje): {e.args[1]} - {e.args[2]}")

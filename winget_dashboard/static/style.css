@@ -77,7 +77,7 @@ tbody tr:hover { background-color: var(--kolor-tla-hover); }
 .action-btn:hover { text-decoration: none; opacity: 0.9; }
 .action-btn:disabled { cursor: not-allowed; opacity: 0.65; }
 .btn-report { background-color: #17a2b8; border-color: #17a2b8; }
-.refresh-btn { background-color: #ffc107; border-color: #ffc107; }
+.refresh-btn { background-color: #ffc107; border-color: #ffc107; color: #212529; }
 .update-btn { padding: 5px 10px; font-size: 12px; background-color: #dc3545; border-color: #dc3545; }
 .btn-secondary { background-color: #6c757d; border-color: #6c757d; }
 
@@ -86,59 +86,18 @@ tbody tr:hover { background-color: var(--kolor-tla-hover); }
 .status-pending { color: #ffc107; font-weight: bold; }
 .status-fail { color: #dc3545; font-weight: bold; }
 
-/* === PRZYCISKI-IKONY (USTAWIENIA, MOTYW) === */
-.icon-btn {
-    background: none; border: none; cursor: pointer; padding: 5px;
-    vertical-align: middle; line-height: 0;
-}
+/* Pozostałe style bez zmian */
+.icon-btn { background: none; border: none; cursor: pointer; padding: 5px; vertical-align: middle; line-height: 0; }
 .icon-btn svg { width: 24px; height: 24px; fill: var(--kolor-tekstu); stroke: var(--kolor-tekstu); }
 #theme-toggle .sun-icon { display: none; }
 #theme-toggle .moon-icon { display: inline-block; }
 html.dark-mode #theme-toggle .sun-icon { display: inline-block; }
 html.dark-mode #theme-toggle .moon-icon { display: none; }
-
-/* === STOPKA === */
-.main-footer {
-    position: fixed; left: 0; bottom: 0; width: 100%; z-index: 100;
-    background-color: var(--kolor-tla); text-align: center;
-    padding: 0.25rem 0; color: #6c757d; font-size: 0.8em;
-    border-top: 1px solid var(--kolor-tabeli-ramka);
-}
-
-/* === STYLE FORMULARZA === */
-.settings-form {
-    max-width: 600px;
-    margin-top: 2rem;
-    background-color: var(--kolor-tabeli-tlo);
-    padding: 2rem;
-    border-radius: 8px;
-    box-shadow: 0 2px 4px var(--kolor-cienia);
-}
-.form-group {
-    margin-bottom: 1.5rem;
-}
-.form-group label {
-    display: block;
-    font-weight: bold;
-    margin-bottom: 0.5rem;
-}
-.form-group input, .form-group textarea {
-    width: 100%;
-    padding: 10px;
-    border: 1px solid var(--kolor-tabeli-ramka);
-    background-color: var(--kolor-tla);
-    color: var(--kolor-tekstu);
-    border-radius: 4px;
-    box-sizing: border-box;
-}
-.form-group small {
-    display: block;
-    margin-top: 0.5rem;
-    font-size: 0.85em;
-    color: #888;
-}
-.form-group textarea {
-    min-height: 120px;
-    resize: vertical;
-    font-family: inherit;
-}
+.main-footer { position: fixed; left: 0; bottom: 0; width: 100%; z-index: 100; background-color: var(--kolor-tla); text-align: center; padding: 0.25rem 0; color: #6c757d; font-size: 0.8em; border-top: 1px solid var(--kolor-tabeli-ramka); }
+.settings-form { max-width: 600px; margin-top: 2rem; background-color: var(--kolor-tabeli-tlo); padding: 2rem; border-radius: 8px; box-shadow: 0 2px 4px var(--kolor-cienia); }
+.form-group { margin-bottom: 1.5rem; }
+.form-group label { display: block; font-weight: bold; margin-bottom: 0.5rem; }
+.form-group input, .form-group textarea { width: 100%; padding: 10px; border: 1px solid var(--kolor-tabeli-ramka); background-color: var(--kolor-tla); color: var(--kolor-tekstu); border-radius: 4px; box-sizing: border-box; }
+.form-group small { display: block; margin-top: 0.5rem; font-size: 0.85em; color: #888; }
+.form-group textarea { min-height: 120px; resize: vertical; font-family: inherit; }
+.notification-bar { padding: 1rem; margin-bottom: 1rem; border-radius: 5px; font-weight: bold; }

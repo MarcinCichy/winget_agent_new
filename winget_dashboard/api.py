@@ -57,3 +57,34 @@ def get_blacklist():
     keywords_str = current_app.config['DEFAULT_BLACKLIST_KEYWORDS']
     keywords = [line.strip() for line in keywords_str.strip().split('\n') if line.strip()]
     return jsonify(keywords)
+
+# --- NOWE TRASY DLA PRZYCISKÓW W PANELU ---
+
+@bp.route('/computer/<int:computer_id>/refresh', methods=['POST'])
+def request_refresh(computer_id):
+    db_manager = DatabaseManager()
+    db_manager.create_task(computer_id, 'force_report', '{}')
+    return jsonify({"status": "success", "message": "Zadanie odświeżenia zlecone"})
+
+@bp.route('/computer/<int:computer_id>/update', methods=['POST'])
+def request_update(computer_id):
+    data = request.get_json()
+    db_manager = DatabaseManager()
+    db_manager.create_task(
+        computer_id=computer_id,
+        command='update_package',
+        payload=data.get('package_id'),
+        update_id=data.get('update_id') # Przekazujemy ID aktualizacji do oznaczenia
+    )
+    return jsonify({"status": "success", "message": "Zadanie aktualizacji zlecone"})
+
+@bp.route('/computer/<int:computer_id>/uninstall', methods=['POST'])
+def request_uninstall(computer_id):
+    data = request.get_json()
+    db_manager = DatabaseManager()
+    db_manager.create_task(
+        computer_id=computer_id,
+        command='uninstall_package',
+        payload=data.get('package_id')
+    )
+    return jsonify({"status": "success", "message": "Zadanie deinstalacji zlecone"})

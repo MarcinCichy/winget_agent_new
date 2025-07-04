@@ -1,7 +1,7 @@
 // Czekaj, aż cała strona się załaduje, zanim podepniesz skrypty do przycisków
 document.addEventListener('DOMContentLoaded', () => {
 
-    // Logika dla przełącznika motywu - jest na każdej stronie
+    // Logika dla przełącznika motywu
     const toggleButton = document.getElementById('theme-toggle');
     const htmlEl = document.documentElement;
     if(toggleButton) {
@@ -15,13 +15,13 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('.refresh-btn').forEach(button => {
         button.addEventListener('click', function() {
             const computerId = this.dataset.computerId;
-            const notificationBar = document.getElementById('notification-bar'); // Może istnieć lub nie
+            const notificationBar = document.getElementById('notification-bar');
             const buttonCell = this.parentElement;
 
             this.textContent = 'Wysyłanie...';
             this.disabled = true;
 
-            fetch(`/computer/${computerId}/refresh`, {
+            fetch(`/api/computer/${computerId}/refresh`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({})
@@ -39,12 +39,12 @@ document.addEventListener('DOMContentLoaded', () => {
                          buttonCell.innerHTML = `<span class="status-pending">${message}</span>`;
                     }
                     setTimeout(() => { location.reload(); }, 20000);
-                    //location.reload();
                 } else {
                     this.textContent = 'Błąd!';
                     this.disabled = false;
                 }
             }).catch(error => {
+                console.error("Błąd sieci:", error);
                 this.textContent = 'Błąd sieci!';
                 this.disabled = false;
             });
@@ -59,9 +59,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const packageId = this.dataset.packageId;
             const appName = this.closest('tr').cells[1].textContent;
             if (!confirm(`Czy na pewno chcesz zlecić aktualizację aplikacji "${appName}"?`)) return;
+
             this.textContent = 'Zlecanie...';
             this.disabled = true;
-            fetch(`/computer/${computerId}/update`, {
+
+            fetch(`/api/computer/${computerId}/update`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ package_id: packageId, update_id: updateId })
@@ -77,6 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     alert('Wystąpił błąd po stronie serwera: ' + data.message);
                 }
             }).catch(error => {
+                console.error("Błąd sieci:", error);
                 this.textContent = 'Błąd sieci!';
                 this.disabled = false;
             });
@@ -91,9 +94,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const appName = this.closest('tr').cells[0].textContent;
             const notificationBar = document.getElementById('notification-bar');
             if (!confirm(`Czy na pewno chcesz zlecić deinstalację aplikacji "${appName}"?\n\nUWAGA: Ta akcja jest nieodwracalna!`)) return;
+
             this.textContent = 'Zlecanie...';
             this.disabled = true;
-            fetch(`/computer/${computerId}/uninstall`, {
+
+            fetch(`/api/computer/${computerId}/uninstall`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ package_id: packageId })
@@ -114,19 +119,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     notificationBar.style.display = 'block';
                 }
             }).catch(error => {
+                console.error("Błąd sieci:", error);
                 this.textContent = 'Błąd sieci!';
                 this.disabled = false;
             });
         });
     });
-});
-
-document.addEventListener('DOMContentLoaded', function() {
-    var textarea = document.getElementById('blacklist_keywords');
-    if (textarea) {
-        textarea.addEventListener('blur', function() {
-            var cleaned = textarea.value.split('\n').map(line => line.trim()).join('\n');
-            textarea.value = cleaned;
-        });
-    }
 });
