@@ -1,0 +1,6 @@
+# requirements.txt
+flask
+python-dotenv
+pywin32
+pyinstaller
+tzdata

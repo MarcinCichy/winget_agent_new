@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Ustawienia i Generator Agenta{% endblock %}
+
+{% block header_main_left %}
+    <a href="{{ url_for('views.index') }}" class="back-link">&larr; Powrót do strony głównej</a>
+{% endblock %}
+
+{% block sub_header %}
+    <h1>Generator Agenta</h1>
+{% endblock %}
+
+{% block content %}
+    <p>Wypełnij poniższy formularz, aby wygenerować gotowy do wdrożenia plik wykonywalny <strong>agent.exe</strong>.</p>
+    <p>Plik ten będzie miał "wypalone" na stałe poniższe ustawienia, eliminując potrzebę konfiguracji na komputerach klienckich.</p>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+            <div class="notification-bar" style="background-color: #dc3545; color: white; padding: 1rem; margin-bottom: 1rem; border-radius: 5px;">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <form action="{{ url_for('views.generate_exe') }}" method="POST" class="settings-form">
+        <div class="form-group">
+            <label for="api_endpoint_1">Adres serwera (API Endpoint):</label>
+            <input type="text" id="api_endpoint_1" name="api_endpoint_1" value="http://TWOJ_ADRES_IP:5000" required>
+            <small>Podstawowy adres serwera (bez /api/report). Agent sam doda odpowiednie ścieżki.</small>
+        </div>
+        <div class="form-group">
+            <label for="api_key">Klucz API (API Key):</label>
+            <input type="text" id="api_key" name="api_key" value="{{ server_api_key }}" required>
+            <small>Klucz API musi być identyczny jak ten w pliku .env na serwerze.</small>
+        </div>
+        <div class="form-group">
+            <label for="winget_path">Alternatywna ścieżka do winget.exe (opcjonalnie):</label>
+            <input type="text" id="winget_path" name="winget_path" value="">
+            <small>Podaj, jeśli winget jest w niestandardowej lokalizacji.</small>
+        </div>
+        <div class="form-group">
+            <label for="loop_interval">Interwał sprawdzania zadań (w sekundach):</label>
+            <input type="number" id="loop_interval" name="loop_interval" value="300" required>
+            <small>Co ile sekund agent ma pytać serwer o nowe zadania (np. 300 = 5 minut).</small>
+        </div>
+         <div class="form-group">
+            <label for="report_interval">Interwał pełnego raportu (w sekundach):</label>
+            <input type="number" id="report_interval" name="report_interval" value="3600" required>
+            <small>Co ile sekund agent ma wysyłać pełny raport o stanie aplikacji (np. 3600 = 1 godzina).</small>
+        </div>
+        <button type="submit" class="action-btn btn-report">Generuj agent.exe</button>
+    </form>
+{% endblock %}
