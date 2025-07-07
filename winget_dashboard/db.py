@@ -1,4 +1,3 @@
-# winget_dashboard/db.py
 import sqlite3
 import logging
 import click
@@ -45,7 +44,7 @@ def init_app(app):
     app.cli.add_command(init_db_command)
 
 
-# --- Klasa Managera Bazy Danych (bez zmian) ---
+# --- Klasa Managera Bazy Danych ---
 
 class DatabaseManager:
     """Klasa hermetyzująca wszystkie operacje na bazie danych."""
@@ -58,9 +57,6 @@ class DatabaseManager:
         if commit:
             self.db.commit()
         return cursor
-
-    # Reszta metod klasy DatabaseManager pozostaje bez zmian...
-    # (get_all_computers, get_computer_details, itd.)
 
     def get_all_computers(self):
         return self._execute(
@@ -99,6 +95,7 @@ class DatabaseManager:
         logging.info(f"Przetwarzanie raportu od: {hostname}")
 
         try:
+            # --- Zapis komputera i raportu (bez zmian) ---
             computer = self._execute("SELECT id FROM computers WHERE hostname = ?", (hostname,)).fetchone()
             if computer:
                 computer_id = computer['id']
@@ -109,22 +106,37 @@ class DatabaseManager:
                 cursor = self._execute("INSERT INTO computers (hostname, ip_address, reboot_required) VALUES (?, ?, ?)",
                                        (hostname, data.get('ip_address'), data.get('reboot_required', False)))
                 computer_id = cursor.lastrowid
-
             cursor = self._execute("INSERT INTO reports (computer_id) VALUES (?)", (computer_id,))
             report_id = cursor.lastrowid
 
-            # Logika wstawiania aplikacji i aktualizacji
+            # --- Zapis aplikacji (bez zmian) ---
             apps_to_insert = [(report_id, app.get('name'), app.get('version'), app.get('id', 'N/A')) for app in
                               data.get('installed_apps', [])]
-            if apps_to_insert: self.db.executemany(
-                "INSERT INTO applications (report_id, name, version, app_id) VALUES (?, ?, ?, ?)", apps_to_insert)
+            if apps_to_insert:
+                self.db.executemany("INSERT INTO applications (report_id, name, version, app_id) VALUES (?, ?, ?, ?)",
+                                    apps_to_insert)
 
-            updates_to_insert = [
-                (report_id, u.get('name'), u.get('id', 'N/A'), u.get('current_version'), u.get('available_version'),
-                 u.get('update_type', 'APP')) for u in data.get('available_updates', [])]
-            if updates_to_insert: self.db.executemany(
-                "INSERT INTO updates (report_id, name, app_id, current_version, available_version, update_type) VALUES (?, ?, ?, ?, ?, ?)",
-                updates_to_insert)
+            # ### KLUCZOWA POPRAWKA - Zapis aktualizacji ###
+
+            # 1. Przetwarzanie aktualizacji aplikacji z klucza 'available_app_updates'
+            app_updates_to_insert = [
+                (report_id, u.get('name'), u.get('id', 'N/A'), u.get('version'), u.get('available_version'), 'APP')
+                for u in data.get('available_app_updates', [])
+            ]
+            if app_updates_to_insert:
+                self.db.executemany(
+                    "INSERT INTO updates (report_id, name, app_id, current_version, available_version, update_type) VALUES (?, ?, ?, ?, ?, ?)",
+                    app_updates_to_insert)
+
+            # 2. Przetwarzanie aktualizacji systemu z klucza 'pending_os_updates'
+            os_updates_to_insert = [
+                (report_id, u.get('Title'), u.get('KB', 'N/A'), 'N/A', 'N/A', 'OS')
+                for u in data.get('pending_os_updates', []) if isinstance(u, dict)
+            ]
+            if os_updates_to_insert:
+                self.db.executemany(
+                    "INSERT INTO updates (report_id, name, app_id, current_version, available_version, update_type) VALUES (?, ?, ?, ?, ?, ?)",
+                    os_updates_to_insert)
 
             self.db.commit()
             return True
@@ -133,9 +145,13 @@ class DatabaseManager:
             logging.error(f"Błąd transakcji podczas zapisu raportu od {hostname}: {e}", exc_info=True)
             return False
 
-    def create_task(self, computer_id, command, payload):
+    def create_task(self, computer_id, command, payload, update_id=None):
+        # Poprawka: payload powinien być zapisany jako JSON string
+        json_payload = json.dumps(payload) if isinstance(payload, dict) else payload
         self._execute("INSERT INTO tasks (computer_id, command, payload) VALUES (?, ?, ?)",
-                      (computer_id, command, payload), commit=True)
+                      (computer_id, command, json_payload), commit=True)
+        if update_id:
+            self._execute("UPDATE updates SET status = 'Oczekuje' WHERE id = ?", (update_id,), commit=True)
 
     def get_pending_tasks(self, hostname):
         computer = self._execute("SELECT id FROM computers WHERE hostname = ?", (hostname,)).fetchone()
