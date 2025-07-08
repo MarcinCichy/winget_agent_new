@@ -115,8 +115,8 @@ def update_blacklist(computer_id):
 
     hostname = computer_details['computer']['hostname']
 
+    # POPRAWKA: Ten punkt końcowy teraz tylko zapisuje listę.
+    # Zlecenie odświeżenia jest obsługiwane przez frontend.
     db_manager.update_computer_blacklist(hostname, clean_blacklist_str)
 
-    db_manager.create_task(computer_id, 'force_report', '{}')
-
-    return jsonify({"status": "success", "message": "Czarna lista zaktualizowana, zlecono odświeżenie."})
+    return jsonify({"status": "success", "message": "Czarna lista zaktualizowana."})

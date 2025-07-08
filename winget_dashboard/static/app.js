@@ -1,6 +1,14 @@
 // Czekaj, aż cała strona się załaduje, zanim podepniesz skrypty do przycisków
 document.addEventListener('DOMContentLoaded', () => {
 
+    // Funkcja do wymuszonego przeładowania strony, omijająca cache
+    function forceReload() {
+        // Dodajemy unikalny parametr do URL, aby przeglądarka nie wczytała strony z pamięci podręcznej
+        const url = new URL(window.location);
+        url.searchParams.set('t', new Date().getTime());
+        window.location.href = url.toString();
+    }
+
     // Logika dla przełącznika motywu
     const toggleButton = document.getElementById('theme-toggle');
     const htmlEl = document.documentElement;
@@ -16,7 +24,6 @@ document.addEventListener('DOMContentLoaded', () => {
         button.addEventListener('click', function() {
             const computerId = this.dataset.computerId;
             const notificationBar = document.getElementById('notification-bar');
-            const buttonCell = this.parentElement;
 
             this.textContent = 'Wysyłanie...';
             this.disabled = true;
@@ -35,10 +42,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         notificationBar.textContent = message;
                         notificationBar.style.backgroundColor = '#007bff';
                         notificationBar.style.display = 'block';
-                    } else if(buttonCell) {
-                         buttonCell.innerHTML = `<span class="status-pending">${message}</span>`;
                     }
-                    setTimeout(() => { location.reload(); }, 35000);
+                    // POPRAWKA: Używamy nowej funkcji do przeładowania
+                    setTimeout(forceReload, 35000);
                 } else {
                     this.textContent = 'Błąd!';
                     this.disabled = false;
@@ -72,7 +78,7 @@ document.addEventListener('DOMContentLoaded', () => {
             .then(data => {
                 if (data.status === 'success') {
                     this.textContent = 'Zlecono';
-                    setTimeout(() => location.reload(), 15000);
+                    setTimeout(forceReload, 15000);
                 } else {
                     this.textContent = 'Błąd!';
                     this.disabled = false;
@@ -110,7 +116,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     notificationBar.textContent = `Zlecono deinstalację dla "${appName}". Strona odświeży się za chwilę.`;
                     notificationBar.style.backgroundColor = '#ffc107';
                     notificationBar.style.display = 'block';
-                    setTimeout(() => { location.reload(); }, 20000);
+                    setTimeout(forceReload, 20000);
                 } else {
                     this.textContent = 'Błąd!';
                     this.disabled = false;
@@ -126,7 +132,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // POPRAWIONA LOGIKA: Obsługa formularza czarnej listy
+    // Logika dla formularza czarnej listy
     const blacklistForm = document.getElementById('blacklist-form');
     if (blacklistForm) {
         blacklistForm.addEventListener('submit', function(e) {
@@ -137,7 +143,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const button = this.querySelector('button[type="submit"]');
             const notificationBar = document.getElementById('notification-bar');
 
-            const originalButtonText = button.textContent;
             button.textContent = 'Zapisywanie...';
             button.disabled = true;
 
@@ -146,35 +151,32 @@ document.addEventListener('DOMContentLoaded', () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ blacklist_keywords: keywords })
             })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'success') {
-                    // POPRAWKA: Zamiast przeładowywać, informujemy użytkownika, co ma zrobić.
-                    notificationBar.textContent = 'Zapisano! Kliknij [Odśwież] w prawym górnym rogu, aby pobrać nowe dane.';
-                    notificationBar.style.backgroundColor = '#28a745';
-                    notificationBar.style.display = 'block';
-                    window.scrollTo(0, 0);
+            .then(response => {
+                if (!response.ok) { throw new Error('Błąd zapisu czarnej listy'); }
+                return response.json();
+            })
+            .then(saveData => {
+                notificationBar.textContent = 'Zapisano! Zlecanie odświeżenia agentowi...';
+                notificationBar.style.backgroundColor = '#28a745';
+                notificationBar.style.display = 'block';
 
-                    button.textContent = 'Zapisano!';
-                    setTimeout(() => {
-                        button.textContent = originalButtonText;
-                        button.disabled = false;
-                    }, 2000);
-                } else {
-                    notificationBar.textContent = 'Błąd zapisu: ' + (data.message || 'Nieznany błąd serwera.');
-                    notificationBar.style.backgroundColor = '#dc3545';
-                    notificationBar.style.display = 'block';
-                    window.scrollTo(0, 0);
-                    button.textContent = originalButtonText;
-                    button.disabled = false;
-                }
-            }).catch(error => {
-                console.error("Błąd sieci:", error);
-                notificationBar.textContent = 'Błąd sieciowy. Sprawdź konsolę przeglądarki.';
+                return fetch(`/api/computer/${computerId}/refresh`, { method: 'POST' });
+            })
+            .then(response => {
+                if (!response.ok) { throw new Error('Błąd zlecania odświeżenia'); }
+                return response.json();
+            })
+            .then(refreshData => {
+                notificationBar.textContent = 'Zapisano i zlecono odświeżenie! Strona przeładuje się za ~35 sekund.';
+                // POPRAWKA: Używamy nowej funkcji do przeładowania
+                setTimeout(forceReload, 35000);
+            })
+            .catch(error => {
+                console.error("Błąd:", error);
+                notificationBar.textContent = 'Wystąpił błąd. Sprawdź konsolę.';
                 notificationBar.style.backgroundColor = '#dc3545';
                 notificationBar.style.display = 'block';
-                window.scrollTo(0, 0);
-                button.textContent = originalButtonText;
+                button.textContent = 'Zapisz i odśwież';
                 button.disabled = false;
             });
         });
