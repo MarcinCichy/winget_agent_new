@@ -13,18 +13,32 @@
 {% endblock %}
 
 {% block sub_header %}
-    <h1>Szczegóły komputera: {{ computer.hostname }} (Ostatni raport)</h1>
-    <p><strong>IP:</strong> {{ computer.ip_address }} | <strong>Ostatni raport:</strong> {{ computer.last_report | to_local_time }}</p>
+<div class="header-sub-grid">
+    <div class="sub-grid-left">
+        <h1>{{ computer.hostname }}</h1>
+        <p><strong>IP:</strong> {{ computer.ip_address }} | <strong>Ostatni raport:</strong> {{ computer.last_report | to_local_time }}</p>
+    </div>
+    <div class="sub-grid-right">
+        <form id="blacklist-form" class="blacklist-editor">
+            <div class="editor-header">
+                <label for="blacklist-keywords">Czarna lista (oddzielona przecinkami):</label>
+                <!-- POPRAWKA: Zmieniono tekst przycisku -->
+                <button type="submit" class="action-btn btn-report">Zapisz zmiany</button>
+            </div>
+            <textarea id="blacklist-keywords" name="blacklist_keywords" rows="3">{{ editable_blacklist }}</textarea>
+        </form>
+    </div>
+</div>
 {% endblock %}
 
 {% block content %}
     {% if computer.reboot_required %}
-    <div class="notification-bar" style="background-color: #ffc107; color: #212529; padding: 1rem; margin-bottom: 1rem; border-radius: 5px; font-weight: bold;">
+    <div class="notification-bar" style="background-color: #ffc107; color: #212529;">
         <strong>UWAGA:</strong> Ten komputer wymaga ponownego uruchomienia, aby zakończyć instalację oczekujących aktualizacji.
     </div>
     {% endif %}
 
-    <div id="notification-bar" style="display: none; padding: 1rem; margin-bottom: 1rem; border-radius: 5px; color: white; font-weight: bold;"></div>
+    <div id="notification-bar" style="display: none;"></div>
 
     <h2>Dostępne aktualizacje ({{ updates|length }})</h2>
     <table>

@@ -1,4 +1,3 @@
-# winget_dashboard/views.py
 import os
 import logging
 import shutil
@@ -13,18 +12,39 @@ from .services import AgentGenerator, ReportGenerator
 
 bp = Blueprint('views', __name__)
 
+
 @bp.route('/')
 def index():
     db_manager = DatabaseManager()
     computers = db_manager.get_all_computers()
     return render_template('index.html', computers=computers)
 
+
 @bp.route('/computer/<hostname>')
 def computer_details(hostname):
     db_manager = DatabaseManager()
     details = db_manager.get_computer_details(hostname)
     if not details: abort(404)
+
+    # POPRAWKA: Używamy operatora 'in' do sprawdzenia istnienia klucza w obiekcie sqlite3.Row,
+    # ponieważ nie ma on metody .get(). To jest właściwy sposób.
+    computer_specific_blacklist = details['computer']['blacklist_keywords'] if 'blacklist_keywords' in details[
+        'computer'] else None
+
+    if computer_specific_blacklist:
+        # Jeśli komputer ma swoją własną, zapisaną listę, użyj jej.
+        editable_blacklist = computer_specific_blacklist
+    else:
+        # W przeciwnym razie, załaduj globalną domyślną listę jako punkt wyjścia.
+        default_keywords_raw = current_app.config['DEFAULT_BLACKLIST_KEYWORDS']
+        default_keywords_list = [line.strip() for line in default_keywords_raw.strip().split('\n') if line.strip()]
+        editable_blacklist = ", ".join(default_keywords_list)
+
+    # Przekaż do szablonu jedną, gotową do edycji listę.
+    details['editable_blacklist'] = editable_blacklist
+
     return render_template('computer.html', **details)
+
 
 @bp.route('/computer/<hostname>/history')
 def computer_history(hostname):
@@ -33,6 +53,7 @@ def computer_history(hostname):
     if not history: abort(404)
     return render_template('history.html', **history)
 
+
 @bp.route('/report/<int:report_id>')
 def view_report(report_id):
     db_manager = DatabaseManager()
@@ -40,11 +61,13 @@ def view_report(report_id):
     if not report_data: abort(404)
     return render_template('report_view.html', **report_data)
 
+
 @bp.route('/settings')
 def settings():
     return render_template('settings.html',
                            server_api_key=current_app.config['API_KEY'],
                            default_blacklist_keywords=current_app.config['DEFAULT_BLACKLIST_KEYWORDS'])
+
 
 @bp.route('/settings/generate_exe', methods=['POST'])
 def generate_exe():
@@ -56,17 +79,14 @@ def generate_exe():
         agent_generator = AgentGenerator(template)
         config = {k: v for k, v in request.form.items()}
 
-        # Generator tworzy plik w katalogu tymczasowym
         exe_path = agent_generator.generate_exe(config)
-        build_dir = os.path.dirname(os.path.dirname(exe_path)) # Zapamiętujemy główny folder do usunięcia
+        build_dir = os.path.dirname(os.path.dirname(exe_path))
 
-        # Wczytujemy plik do bufora w pamięci RAM
         buffer = io.BytesIO()
         with open(exe_path, 'rb') as f:
             buffer.write(f.read())
-        buffer.seek(0) # Przewijamy bufor na początek
+        buffer.seek(0)
 
-        # Harmonogram usuwania katalogu PO zakończeniu tego żądania
         @after_this_request
         def cleanup(response):
             try:
@@ -77,7 +97,6 @@ def generate_exe():
                 logging.error(f"Nie udało się usunąć katalogu tymczasowego {build_dir}: {e}")
             return response
 
-        # Wysyłamy plik z bufora w pamięci, a nie z dysku
         return send_file(
             buffer,
             as_attachment=True,
@@ -86,16 +105,17 @@ def generate_exe():
         )
 
     except Exception as e:
-        # Jeśli wystąpił błąd przed wysłaniem pliku, również posprzątaj
         if build_dir and os.path.exists(build_dir):
             shutil.rmtree(build_dir, ignore_errors=True)
         logging.error(f"Błąd podczas generowania EXE: {e}", exc_info=True)
         flash(f"Wystąpił nieoczekiwany błąd serwera: {e}", "error")
         return redirect(url_for('views.settings'))
 
+
 @bp.route('/favicon.ico')
 def favicon():
-    return send_from_directory(os.path.join(current_app.root_path, 'static'), 'favicon.ico', mimetype='image/vnd.microsoft.icon')
+    return send_from_directory(os.path.join(current_app.root_path, 'static'), 'favicon.ico',
+                               mimetype='image/vnd.microsoft.icon')
 
 
 # --- Trasy do generowania raportów ---
@@ -111,6 +131,7 @@ def report_single(computer_id):
     content = report_generator.generate_report_content([computer_id])
     filename = f"report_{computer['hostname']}_{datetime.now().strftime('%Y%m%d')}.txt"
     return Response(content, mimetype='text/plain', headers={"Content-disposition": f"attachment; filename={filename}"})
+
 
 @bp.route('/report/all')
 def report_all():

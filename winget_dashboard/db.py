@@ -53,16 +53,19 @@ class DatabaseManager:
         try:
             if computer:
                 computer_id = computer['id']
-                # POPRAWKA: Usunięto commit=True, aby zachować atomowość transakcji.
-                # Zmiany zostaną zatwierdzone razem z resztą danych na końcu metody.
                 self._execute(
                     "UPDATE computers SET ip_address = ?, reboot_required = ?, last_report = CURRENT_TIMESTAMP WHERE id = ?",
                     (data.get('ip_address'), data.get('reboot_required', False), computer_id))
             else:
-                default_blacklist = current_app.config['DEFAULT_BLACKLIST_KEYWORDS']
+                # ZMIANA: Konwertujemy domyślną czarną listę (z nowymi liniami) na string z przecinkami
+                default_keywords_raw = current_app.config['DEFAULT_BLACKLIST_KEYWORDS']
+                default_keywords_list = [line.strip() for line in default_keywords_raw.strip().split('\n') if
+                                         line.strip()]
+                default_blacklist_str = ", ".join(default_keywords_list)
+
                 cursor = self._execute(
                     "INSERT INTO computers (hostname, ip_address, reboot_required, blacklist_keywords) VALUES (?, ?, ?, ?)",
-                    (hostname, data.get('ip_address'), data.get('reboot_required', False), default_blacklist),
+                    (hostname, data.get('ip_address'), data.get('reboot_required', False), default_blacklist_str),
                     commit=True)
                 computer_id = cursor.lastrowid
 
@@ -81,9 +84,10 @@ class DatabaseManager:
                 "INSERT INTO updates (report_id, name, app_id, current_version, available_version, update_type) VALUES (?, ?, ?, ?, ?, ?)",
                 app_updates_to_insert)
 
+            # KLUCZOWA POPRAWKA: Agent wysyła klucz "KB", a nie "KBArticleIDs". To powodowało błąd i rollback transakcji.
             os_updates_to_insert = [
-                (report_id, u.get('Title'), u.get('KBArticleIDs', ['N/A'])[0] if u.get('KBArticleIDs') else 'N/A',
-                 'N/A', 'N/A', 'OS') for u in data.get('pending_os_updates', []) if isinstance(u, dict)]
+                (report_id, u.get('Title'), u.get('KB', 'N/A'), 'N/A', 'N/A', 'OS')
+                for u in data.get('pending_os_updates', []) if isinstance(u, dict)]
             if os_updates_to_insert: self.db.executemany(
                 "INSERT INTO updates (report_id, name, app_id, current_version, available_version, update_type) VALUES (?, ?, ?, ?, ?, ?)",
                 os_updates_to_insert)
@@ -104,7 +108,6 @@ class DatabaseManager:
         result = self._execute("SELECT blacklist_keywords FROM computers WHERE hostname = ?", (hostname,)).fetchone()
         return result['blacklist_keywords'] if result else ""
 
-    # --- Reszta metod bez zmian ---
     def get_all_computers(self):
         return self._execute(
             "SELECT id, hostname, ip_address, last_report, reboot_required FROM computers ORDER BY hostname COLLATE NOCASE").fetchall()

@@ -1,4 +1,3 @@
-# winget_dashboard/api.py
 from flask import Blueprint, request, jsonify, abort, current_app
 from functools import wraps
 from .db import DatabaseManager
@@ -51,12 +50,20 @@ def task_result():
     return "Result received", 200
 
 
-@bp.route('/settings/blacklist', methods=['GET'])
+@bp.route('/settings/blacklist/<hostname>', methods=['GET'])
 @require_api_key
-def get_blacklist():
-    keywords_str = current_app.config['DEFAULT_BLACKLIST_KEYWORDS']
-    keywords = [line.strip() for line in keywords_str.strip().split('\n') if line.strip()]
-    return jsonify(keywords)
+def get_blacklist(hostname):
+    db_manager = DatabaseManager()
+    keywords_str = db_manager.get_computer_blacklist(hostname)
+
+    if not keywords_str:
+        default_keywords_raw = current_app.config['DEFAULT_BLACKLIST_KEYWORDS']
+        keywords_list = [line.strip() for line in default_keywords_raw.strip().split('\n') if line.strip()]
+    else:
+        keywords_list = [k.strip() for k in keywords_str.split(',') if k.strip()]
+
+    return jsonify(keywords_list)
+
 
 # --- NOWE TRASY DLA PRZYCISKÓW W PANELU ---
 
@@ -66,6 +73,7 @@ def request_refresh(computer_id):
     db_manager.create_task(computer_id, 'force_report', '{}')
     return jsonify({"status": "success", "message": "Zadanie odświeżenia zlecone"})
 
+
 @bp.route('/computer/<int:computer_id>/update', methods=['POST'])
 def request_update(computer_id):
     data = request.get_json()
@@ -74,9 +82,10 @@ def request_update(computer_id):
         computer_id=computer_id,
         command='update_package',
         payload=data.get('package_id'),
-        update_id=data.get('update_id') # Przekazujemy ID aktualizacji do oznaczenia
+        update_id=data.get('update_id')
     )
     return jsonify({"status": "success", "message": "Zadanie aktualizacji zlecone"})
+
 
 @bp.route('/computer/<int:computer_id>/uninstall', methods=['POST'])
 def request_uninstall(computer_id):
@@ -88,3 +97,26 @@ def request_uninstall(computer_id):
         payload=data.get('package_id')
     )
     return jsonify({"status": "success", "message": "Zadanie deinstalacji zlecone"})
+
+
+@bp.route('/computer/<int:computer_id>/blacklist', methods=['POST'])
+def update_blacklist(computer_id):
+    data = request.get_json()
+    new_blacklist_raw = data.get('blacklist_keywords', '')
+
+    keywords = [k.strip() for k in new_blacklist_raw.split(',') if k.strip()]
+    clean_blacklist_str = ", ".join(keywords)
+
+    db_manager = DatabaseManager()
+
+    computer_details = db_manager.get_computer_details_by_id(computer_id)
+    if not computer_details:
+        return jsonify({"status": "error", "message": "Nie znaleziono komputera"}), 404
+
+    hostname = computer_details['computer']['hostname']
+
+    db_manager.update_computer_blacklist(hostname, clean_blacklist_str)
+
+    db_manager.create_task(computer_id, 'force_report', '{}')
+
+    return jsonify({"status": "success", "message": "Czarna lista zaktualizowana, zlecono odświeżenie."})

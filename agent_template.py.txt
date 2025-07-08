@@ -52,7 +52,7 @@ class ApiClient:
             except requests.RequestException as e:
                 logging.warning(f"Błąd komunikacji z {url}: {e}")
         raise ConnectionError("Nie udało się połączyć z żadnym z serwerów API.")
-    def get_blacklist(self): return self._request('get', '/api/settings/blacklist').json()
+    def get_blacklist(self, hostname): return self._request('get', f'/api/settings/blacklist/{hostname}').json()
     def send_report(self, data): self._request('post', '/api/report', data=json.dumps(data))
     def get_tasks(self, hostname): return self._request('get', f'/api/tasks/{hostname}').json()
     def send_task_result(self, task_id, status): self._request('post', '/api/tasks/result', data=json.dumps({'task_id': task_id, 'status': status}))
@@ -171,7 +171,9 @@ class Agent:
     def run_full_report(self):
         logging.info("Rozpoczynanie pełnego raportu...")
         try:
-            if not self.blacklist: self.blacklist = self.api_client.get_blacklist()
+            # Pobieramy najnowszą czarną listę przed każdym raportem
+            self.blacklist = self.api_client.get_blacklist(self.hostname)
+
             report_data = {
                 "hostname": self.hostname, "ip_address": SystemInfo.get_active_ip(),
                 "reboot_required": SystemInfo.is_reboot_required(),
@@ -193,7 +195,14 @@ class Agent:
             for task in tasks:
                 command, payload, task_id = task['command'], task['payload'], task['id']
                 logging.info(f"Otrzymano zadanie ID {task_id}: {command}")
-                if command == 'force_report': self.run_full_report(); self.api_client.send_task_result(task_id, 'zakończone'); continue
+
+                # POPRAWKA: Po wykonaniu zadania force_report, agent natychmiast wysyła raport
+                if command == 'force_report':
+                    self.api_client.send_task_result(task_id, 'w toku')
+                    self.run_full_report()
+                    self.api_client.send_task_result(task_id, 'zakończone')
+                    continue
+
                 success = self.winget_manager.execute_task(command, payload)
                 self.api_client.send_task_result(task_id, 'zakończone' if success else 'błąd')
         except Exception as e:

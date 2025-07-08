@@ -1,4 +1,3 @@
-# winget_dashboard/services.py
 import os
 import shutil
 import subprocess
@@ -19,7 +18,6 @@ class AgentGenerator:
             logging.error("Program 'pyinstaller' nie jest zainstalowany lub nie ma go w ścieżce PATH.")
             raise FileNotFoundError("PyInstaller nie jest dostępny na serwerze.")
 
-        # Zapewnienie, że ścieżka do winget jest poprawnie sformatowana dla Pythona
         winget_path = config.get('winget_path', '').replace('\\', '\\\\')
 
         final_agent_code = self.template \
@@ -36,7 +34,6 @@ class AgentGenerator:
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(final_agent_code)
 
-        # Zmieniono --name na 'agent'
         command = [
             "pyinstaller", "--onefile",
             "--hidden-import=win32timezone",
@@ -50,7 +47,6 @@ class AgentGenerator:
                                     cwd=build_dir)
             logging.info(f"PyInstaller output: {result.stdout}")
 
-            # Zmieniono nazwę oczekiwanego pliku
             output_exe_path = os.path.join(build_dir, 'dist', 'agent.exe')
             if not os.path.exists(output_exe_path):
                 raise FileNotFoundError(f"PyInstaller nie stworzył pliku agent.exe. Log: {result.stderr}")
@@ -59,7 +55,6 @@ class AgentGenerator:
 
         except subprocess.CalledProcessError as e:
             logging.error(f"Błąd kompilacji PyInstaller: {e.stderr}")
-            # Usuń katalog tymczasowy nawet w przypadku błędu
             shutil.rmtree(build_dir, ignore_errors=True)
             raise
 
@@ -87,17 +82,33 @@ class ReportGenerator:
 
             computer = details['computer']
             content.append(f"# RAPORT DLA KOMPUTERA: {computer['hostname']} ({computer['ip_address']})")
+            content.append(f"Data ostatniego raportu: {self._to_local_time(computer['last_report'])}")
             content.append(
-                f"Data wygenerowania: {datetime.now(ZoneInfo('Europe/Warsaw')).strftime('%Y-%m-%d %H:%M:%S')}")
+                f"Data wygenerowania pliku: {datetime.now(ZoneInfo('Europe/Warsaw')).strftime('%Y-%m-%d %H:%M:%S')}")
             content.append("")
 
             updates = details['updates']
             if updates:
                 content.append("## Oczekujące aktualizacje:")
                 for item in updates:
-                    content.append(f"* {item['name']}: {item['current_version']} -> {item['available_version']}")
+                    if item['update_type'] == 'OS':
+                        content.append(f"* [SYSTEM] {item['name']} ({item['app_id']})")
+                    else:
+                        content.append(
+                            f"* [APLIKACJA] {item['name']}: {item['current_version']} -> {item['available_version']}")
             else:
                 content.append("## Brak oczekujących aktualizacji.")
+
+            content.append("")
+
+            # POPRAWKA: Dodajemy listę wszystkich zainstalowanych aplikacji
+            apps = details['apps']
+            if apps:
+                content.append("## Zainstalowane aplikacje:")
+                for app in apps:
+                    content.append(f"* {app['name']} (Wersja: {app['version']})")
+            else:
+                content.append("## Brak zainstalowanych aplikacji w raporcie.")
 
             content.append("\n" + "=" * 80 + "\n")
         return "\n".join(content)

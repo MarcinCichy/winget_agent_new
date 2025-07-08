@@ -8,6 +8,7 @@
     --kolor-linku: #007bff;
     --kolor-cienia: rgba(0,0,0,0.075);
     --kolor-tla-hover: #f1f1f1;
+    --kolor-tla-input: #fff;
 }
 
 /* Definicja tych samych zmiennych, ale z wartościami dla motywu ciemnego */
@@ -20,6 +21,7 @@ html.dark-mode {
     --kolor-linku: #58a6ff;
     --kolor-cienia: rgba(255,255,255,0.075);
     --kolor-tla-hover: #2a2a2a;
+    --kolor-tla-input: #2c2c2c;
 }
 
 /* === OGÓLNE STYLE === */
@@ -29,7 +31,8 @@ body {
     background-color: var(--kolor-tla);
     color: var(--kolor-tekstu);
     transition: background-color 0.2s linear, color 0.2s linear;
-    padding-top: 10rem;
+    /* POPRAWKA: Zmniejszono padding, aby nagłówek nie zakrywał treści */
+    padding-top: 11.5rem;
     padding-bottom: 3rem;
 }
 .main-content {
@@ -63,10 +66,54 @@ tbody tr:hover { background-color: var(--kolor-tla-hover); }
 .header-main { display: flex; justify-content: space-between; align-items: center; }
 .header-left, .header-right { display: flex; align-items: center; gap: 15px; }
 .header-sub { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--kolor-tabeli-ramka); }
-.header-sub h1 { font-size: 1.5em; }
-.header-sub p { margin: 0.25rem 0 0; color: #888; }
 .actions-cell { display: flex; gap: 10px; }
 .back-link { display: inline-block; font-size: 16px; margin: 0; }
+
+/* === NOWE STYLE DLA NAGŁÓWKA I EDYTORA CZARNEJ LISTY === */
+.header-sub-grid {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 2em;
+    align-items: start;
+}
+.sub-grid-left h1 { font-size: 1.5em; }
+.sub-grid-left p { margin: 0.25rem 0 0; color: #888; }
+.blacklist-editor {
+    background-color: var(--kolor-tabeli-tlo);
+    padding: 10px;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px var(--kolor-cienia);
+}
+.blacklist-editor .editor-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+.blacklist-editor label {
+    font-weight: bold;
+    font-size: 0.9em;
+    margin-bottom: 0;
+}
+.blacklist-editor .editor-header .action-btn {
+    margin-top: 0;
+    width: auto;
+    padding: 6px 12px;
+    white-space: nowrap;
+}
+.blacklist-editor textarea {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--kolor-tabeli-ramka);
+    border-radius: 4px;
+    padding: 8px;
+    font-family: inherit;
+    font-size: 0.9em;
+    background-color: var(--kolor-tla-input);
+    color: var(--kolor-tekstu);
+    resize: vertical;
+    min-height: 40px;
+}
 
 /* === PRZYCISKI === */
 .action-btn {
@@ -81,10 +128,11 @@ tbody tr:hover { background-color: var(--kolor-tla-hover); }
 .update-btn { padding: 5px 10px; font-size: 12px; background-color: #dc3545; border-color: #dc3545; }
 .btn-secondary { background-color: #6c757d; border-color: #6c757d; }
 
-/* === STATUSY === */
+/* === STATUSY I POWIADOMIENIA === */
 .status-ok { color: #28a745; font-weight: bold; }
 .status-pending { color: #ffc107; font-weight: bold; }
 .status-fail { color: #dc3545; font-weight: bold; }
+#notification-bar { padding: 1rem; margin-bottom: 1rem; border-radius: 5px; font-weight: bold; color: white; }
 
 /* Pozostałe style bez zmian */
 .icon-btn { background: none; border: none; cursor: pointer; padding: 5px; vertical-align: middle; line-height: 0; }
@@ -97,7 +145,6 @@ html.dark-mode #theme-toggle .moon-icon { display: none; }
 .settings-form { max-width: 600px; margin-top: 2rem; background-color: var(--kolor-tabeli-tlo); padding: 2rem; border-radius: 8px; box-shadow: 0 2px 4px var(--kolor-cienia); }
 .form-group { margin-bottom: 1.5rem; }
 .form-group label { display: block; font-weight: bold; margin-bottom: 0.5rem; }
-.form-group input, .form-group textarea { width: 100%; padding: 10px; border: 1px solid var(--kolor-tabeli-ramka); background-color: var(--kolor-tla); color: var(--kolor-tekstu); border-radius: 4px; box-sizing: border-box; }
+.form-group input, .form-group textarea { width: 100%; padding: 10px; border: 1px solid var(--kolor-tabeli-ramka); background-color: var(--kolor-tla-input); color: var(--kolor-tekstu); border-radius: 4px; box-sizing: border-box; }
 .form-group small { display: block; margin-top: 0.5rem; font-size: 0.85em; color: #888; }
 .form-group textarea { min-height: 120px; resize: vertical; font-family: inherit; }
-.notification-bar { padding: 1rem; margin-bottom: 1rem; border-radius: 5px; font-weight: bold; }

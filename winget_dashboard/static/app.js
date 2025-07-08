@@ -30,7 +30,7 @@ document.addEventListener('DOMContentLoaded', () => {
             .then(data => {
                 if (data.status === 'success') {
                     this.textContent = 'Zlecono';
-                    let message = `Zlecono odświeżenie. Strona przeładuje się automatycznie za ok. 20 sekund.`;
+                    let message = `Zlecono odświeżenie. Strona przeładuje się automatycznie za ~35 sekund.`;
                     if (notificationBar) {
                         notificationBar.textContent = message;
                         notificationBar.style.backgroundColor = '#007bff';
@@ -38,7 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     } else if(buttonCell) {
                          buttonCell.innerHTML = `<span class="status-pending">${message}</span>`;
                     }
-                    setTimeout(() => { location.reload(); }, 20000);
+                    setTimeout(() => { location.reload(); }, 35000);
                 } else {
                     this.textContent = 'Błąd!';
                     this.disabled = false;
@@ -72,7 +72,7 @@ document.addEventListener('DOMContentLoaded', () => {
             .then(data => {
                 if (data.status === 'success') {
                     this.textContent = 'Zlecono';
-                    setTimeout(() => location.reload(), 1500);
+                    setTimeout(() => location.reload(), 15000);
                 } else {
                     this.textContent = 'Błąd!';
                     this.disabled = false;
@@ -107,10 +107,10 @@ document.addEventListener('DOMContentLoaded', () => {
             .then(data => {
                 if (data.status === 'success') {
                     this.textContent = 'Zlecono';
-                    notificationBar.textContent = `Zlecono deinstalację dla "${appName}". Strona odświeży się automatycznie za ok. 20 sekund.`;
+                    notificationBar.textContent = `Zlecono deinstalację dla "${appName}". Strona odświeży się za chwilę.`;
                     notificationBar.style.backgroundColor = '#ffc107';
                     notificationBar.style.display = 'block';
-                    setTimeout(() => { location.reload(); }, 45000);
+                    setTimeout(() => { location.reload(); }, 20000);
                 } else {
                     this.textContent = 'Błąd!';
                     this.disabled = false;
@@ -125,4 +125,58 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
     });
+
+    // POPRAWIONA LOGIKA: Obsługa formularza czarnej listy
+    const blacklistForm = document.getElementById('blacklist-form');
+    if (blacklistForm) {
+        blacklistForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            const computerId = document.querySelector('.refresh-btn').dataset.computerId;
+            const keywords = document.getElementById('blacklist-keywords').value;
+            const button = this.querySelector('button[type="submit"]');
+            const notificationBar = document.getElementById('notification-bar');
+
+            const originalButtonText = button.textContent;
+            button.textContent = 'Zapisywanie...';
+            button.disabled = true;
+
+            fetch(`/api/computer/${computerId}/blacklist`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ blacklist_keywords: keywords })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    // POPRAWKA: Zamiast przeładowywać, informujemy użytkownika, co ma zrobić.
+                    notificationBar.textContent = 'Zapisano! Kliknij [Odśwież] w prawym górnym rogu, aby pobrać nowe dane.';
+                    notificationBar.style.backgroundColor = '#28a745';
+                    notificationBar.style.display = 'block';
+                    window.scrollTo(0, 0);
+
+                    button.textContent = 'Zapisano!';
+                    setTimeout(() => {
+                        button.textContent = originalButtonText;
+                        button.disabled = false;
+                    }, 2000);
+                } else {
+                    notificationBar.textContent = 'Błąd zapisu: ' + (data.message || 'Nieznany błąd serwera.');
+                    notificationBar.style.backgroundColor = '#dc3545';
+                    notificationBar.style.display = 'block';
+                    window.scrollTo(0, 0);
+                    button.textContent = originalButtonText;
+                    button.disabled = false;
+                }
+            }).catch(error => {
+                console.error("Błąd sieci:", error);
+                notificationBar.textContent = 'Błąd sieciowy. Sprawdź konsolę przeglądarki.';
+                notificationBar.style.backgroundColor = '#dc3545';
+                notificationBar.style.display = 'block';
+                window.scrollTo(0, 0);
+                button.textContent = originalButtonText;
+                button.disabled = false;
+            });
+        });
+    }
 });
