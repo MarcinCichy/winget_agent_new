@@ -110,7 +110,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     notificationBar.textContent = `Zlecono deinstalację dla "${appName}". Strona odświeży się automatycznie za ok. 20 sekund.`;
                     notificationBar.style.backgroundColor = '#ffc107';
                     notificationBar.style.display = 'block';
-                    setTimeout(() => { location.reload(); }, 20000);
+                    setTimeout(() => { location.reload(); }, 45000);
                 } else {
                     this.textContent = 'Błąd!';
                     this.disabled = false;

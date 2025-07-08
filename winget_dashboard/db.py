@@ -53,10 +53,11 @@ class DatabaseManager:
         try:
             if computer:
                 computer_id = computer['id']
-                # ### KLUCZOWA POPRAWKA: Dodano `commit=True` ###
+                # POPRAWKA: Usunięto commit=True, aby zachować atomowość transakcji.
+                # Zmiany zostaną zatwierdzone razem z resztą danych na końcu metody.
                 self._execute(
                     "UPDATE computers SET ip_address = ?, reboot_required = ?, last_report = CURRENT_TIMESTAMP WHERE id = ?",
-                    (data.get('ip_address'), data.get('reboot_required', False), computer_id), commit=True)
+                    (data.get('ip_address'), data.get('reboot_required', False), computer_id))
             else:
                 default_blacklist = current_app.config['DEFAULT_BLACKLIST_KEYWORDS']
                 cursor = self._execute(
