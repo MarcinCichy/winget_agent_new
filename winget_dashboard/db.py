@@ -48,27 +48,35 @@ class DatabaseManager:
 
     def save_report(self, data):
         hostname = data.get('hostname')
-        computer = self._execute("SELECT id FROM computers WHERE hostname = ?", (hostname,)).fetchone()
+        if not hostname:
+            logging.error("Otrzymano raport bez nazwy hosta.")
+            return False
 
         try:
-            if computer:
-                computer_id = computer['id']
-                self._execute(
-                    "UPDATE computers SET ip_address = ?, reboot_required = ?, last_report = CURRENT_TIMESTAMP WHERE id = ?",
-                    (data.get('ip_address'), data.get('reboot_required', False), computer_id))
-            else:
-                # ZMIANA: Konwertujemy domyślną czarną listę (z nowymi liniami) na string z przecinkami
-                default_keywords_raw = current_app.config['DEFAULT_BLACKLIST_KEYWORDS']
-                default_keywords_list = [line.strip() for line in default_keywords_raw.strip().split('\n') if
-                                         line.strip()]
-                default_blacklist_str = ", ".join(default_keywords_list)
+            # Krok 1: Użyj "INSERT OR IGNORE", aby atomowo utworzyć wpis komputera, jeśli nie istnieje.
+            # To polecenie wstawi wiersz z domyślną czarną listą TYLKO WTEDY, gdy komputer o danym
+            # hostname jeszcze nie istnieje. Jeśli istnieje, to polecenie nie robi absolutnie nic.
+            # Dzięki temu ręcznie zmodyfikowana czarna lista jest w 100% bezpieczna.
+            default_keywords_raw = current_app.config['DEFAULT_BLACKLIST_KEYWORDS']
+            default_keywords_list = [line.strip() for line in default_keywords_raw.strip().split('\n') if line.strip()]
+            default_blacklist_str = ", ".join(default_keywords_list)
 
-                cursor = self._execute(
-                    "INSERT INTO computers (hostname, ip_address, reboot_required, blacklist_keywords) VALUES (?, ?, ?, ?)",
-                    (hostname, data.get('ip_address'), data.get('reboot_required', False), default_blacklist_str),
-                    commit=True)
-                computer_id = cursor.lastrowid
+            self._execute(
+                "INSERT OR IGNORE INTO computers (hostname, blacklist_keywords) VALUES (?, ?)",
+                (hostname, default_blacklist_str)
+            )
 
+            # Krok 2: Teraz mamy pewność, że komputer istnieje. Pobierz jego ID i zaktualizuj dane z raportu.
+            # Ta operacja aktualizuje TYLKO te pola, które powinny pochodzić z raportu agenta.
+            computer = self._execute("SELECT id FROM computers WHERE hostname = ? COLLATE NOCASE", (hostname,)).fetchone()
+            computer_id = computer['id']
+
+            self._execute(
+                "UPDATE computers SET ip_address = ?, reboot_required = ?, last_report = CURRENT_TIMESTAMP WHERE id = ?",
+                (data.get('ip_address'), data.get('reboot_required', False), computer_id)
+            )
+
+            # Krok 3: Zapisz szczegóły raportu (aplikacje, aktualizacje) w ramach transakcji.
             cursor = self._execute("INSERT INTO reports (computer_id) VALUES (?)", (computer_id,))
             report_id = cursor.lastrowid
 
@@ -84,7 +92,6 @@ class DatabaseManager:
                 "INSERT INTO updates (report_id, name, app_id, current_version, available_version, update_type) VALUES (?, ?, ?, ?, ?, ?)",
                 app_updates_to_insert)
 
-            # KLUCZOWA POPRAWKA: Agent wysyła klucz "KB", a nie "KBArticleIDs". To powodowało błąd i rollback transakcji.
             os_updates_to_insert = [
                 (report_id, u.get('Title'), u.get('KB', 'N/A'), 'N/A', 'N/A', 'OS')
                 for u in data.get('pending_os_updates', []) if isinstance(u, dict)]
@@ -92,6 +99,7 @@ class DatabaseManager:
                 "INSERT INTO updates (report_id, name, app_id, current_version, available_version, update_type) VALUES (?, ?, ?, ?, ?, ?)",
                 os_updates_to_insert)
 
+            # Zatwierdź transakcję
             self.db.commit()
             return True
         except sqlite3.Error as e:
@@ -105,7 +113,9 @@ class DatabaseManager:
         logging.info(f"Zaktualizowano czarną listę dla komputera: {hostname}")
 
     def get_computer_blacklist(self, hostname):
-        result = self._execute("SELECT blacklist_keywords FROM computers WHERE hostname = ?", (hostname,)).fetchone()
+        # Dodano COLLATE NOCASE, aby ignorować wielkość liter w nazwie hosta
+        result = self._execute("SELECT blacklist_keywords FROM computers WHERE hostname = ? COLLATE NOCASE",
+                               (hostname,)).fetchone()
         return result['blacklist_keywords'] if result else ""
 
     def get_all_computers(self):
@@ -113,7 +123,7 @@ class DatabaseManager:
             "SELECT id, hostname, ip_address, last_report, reboot_required FROM computers ORDER BY hostname COLLATE NOCASE").fetchall()
 
     def get_computer_details(self, hostname):
-        computer = self._execute("SELECT * FROM computers WHERE hostname = ?", (hostname,)).fetchone()
+        computer = self._execute("SELECT * FROM computers WHERE hostname = ? COLLATE NOCASE", (hostname,)).fetchone()
         if not computer: return None
         latest_report = self._execute(
             "SELECT id FROM reports WHERE computer_id = ? ORDER BY report_timestamp DESC LIMIT 1",
@@ -130,7 +140,7 @@ class DatabaseManager:
         return {"computer": computer, "apps": apps, "updates": updates}
 
     def get_computer_history(self, hostname):
-        computer = self._execute("SELECT * FROM computers WHERE hostname = ?", (hostname,)).fetchone()
+        computer = self._execute("SELECT * FROM computers WHERE hostname = ? COLLATE NOCASE", (hostname,)).fetchone()
         if not computer: return None
         reports = self._execute(
             "SELECT id, report_timestamp FROM reports WHERE computer_id = ? ORDER BY report_timestamp DESC",
@@ -144,7 +154,7 @@ class DatabaseManager:
         if update_id: self._execute("UPDATE updates SET status = 'Oczekuje' WHERE id = ?", (update_id,), commit=True)
 
     def get_pending_tasks(self, hostname):
-        computer = self._execute("SELECT id FROM computers WHERE hostname = ?", (hostname,)).fetchone()
+        computer = self._execute("SELECT id FROM computers WHERE hostname = ? COLLATE NOCASE", (hostname,)).fetchone()
         if not computer: return []
         tasks = self._execute("SELECT id, command, payload FROM tasks WHERE computer_id = ? AND status = 'oczekuje'",
                               (computer['id'],)).fetchall()

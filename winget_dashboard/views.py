@@ -31,11 +31,13 @@ def computer_details(hostname):
     computer_specific_blacklist = details['computer']['blacklist_keywords'] if 'blacklist_keywords' in details[
         'computer'] else None
 
-    if computer_specific_blacklist:
-        # Jeśli komputer ma swoją własną, zapisaną listę, użyj jej.
+    # POPRAWKA: Sprawdzamy czy wartość nie jest None, zamiast czy jest "prawdziwa".
+    # To poprawnie obsłuży przypadek, gdy czarna lista jest zapisana jako pusty string "".
+    if computer_specific_blacklist is not None:
+        # Jeśli komputer ma swoją własną, zapisaną listę (nawet pustą), użyj jej.
         editable_blacklist = computer_specific_blacklist
     else:
-        # W przeciwnym razie, załaduj globalną domyślną listę jako punkt wyjścia.
+        # W przeciwnym razie (wartość to NULL), załaduj globalną domyślną listę.
         default_keywords_raw = current_app.config['DEFAULT_BLACKLIST_KEYWORDS']
         default_keywords_list = [line.strip() for line in default_keywords_raw.strip().split('\n') if line.strip()]
         editable_blacklist = ", ".join(default_keywords_list)
