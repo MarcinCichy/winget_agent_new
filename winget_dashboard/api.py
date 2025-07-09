@@ -134,3 +134,19 @@ def task_status(task_id):
         return jsonify({"status": status})
     else:
         return jsonify({"status": "not_found"}), 404
+
+
+@bp.route('/computers/refresh_all', methods=['POST'])
+def request_refresh_all():
+    db_manager = DatabaseManager()
+    computers = db_manager.get_all_computers()
+    task_ids = []
+    for computer in computers:
+        task_id = db_manager.create_task(computer['id'], 'force_report', '{}')
+        task_ids.append(task_id)
+
+    return jsonify({
+        "status": "success",
+        "message": f"Zlecono odświeżenie dla {len(task_ids)} komputerów.",
+        "task_count": len(task_ids)
+    })

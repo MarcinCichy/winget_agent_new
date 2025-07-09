@@ -226,4 +226,35 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
     }
+
+    // Logika dla przycisku "Odśwież wszystkie"
+    const refreshAllBtn = document.getElementById('refresh-all-btn');
+    if (refreshAllBtn) {
+        refreshAllBtn.addEventListener('click', function() {
+            if (!confirm('Czy na pewno chcesz zlecić odświeżenie dla WSZYSTKICH komputerów?')) return;
+
+            const originalText = this.textContent;
+            this.textContent = 'Wysyłanie...';
+            this.disabled = true;
+
+            fetch('/api/computers/refresh_all', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        alert(`${data.message}\nStrona przeładuje się automatycznie za około 45 sekund, aby dać agentom czas na odpowiedź.`);
+                        setTimeout(forceReload, 45000);
+                    } else {
+                        alert('Wystąpił błąd podczas zlecania zadań.');
+                        this.textContent = originalText;
+                        this.disabled = false;
+                    }
+                })
+                .catch(error => {
+                    console.error("Błąd sieci:", error);
+                    alert('Błąd sieci. Sprawdź konsolę.');
+                    this.textContent = originalText;
+                    this.disabled = false;
+                });
+        });
+    }
 });
