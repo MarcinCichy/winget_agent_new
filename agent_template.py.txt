@@ -124,7 +124,7 @@ class WingetManager:
         return self._parse_winget_output(output)
 
     def execute_task(self, command, payload):
-        if command == 'update_package': return self._run_winget(f'upgrade --id "{payload}" --accept-package-agreements') is not None
+        if command == 'update_package': return self._run_winget(f'upgrade --id "{payload}" --silent --accept-package-agreements') is not None
         elif command == 'uninstall_package': return self._run_winget(f'uninstall --id "{payload}" --silent --accept-package-agreements') is not None
         return False
 

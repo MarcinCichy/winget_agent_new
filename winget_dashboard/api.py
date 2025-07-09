@@ -82,26 +82,25 @@ def request_refresh(computer_id):
 def request_update(computer_id):
     data = request.get_json()
     db_manager = DatabaseManager()
-    db_manager.create_task(
+    task_id = db_manager.create_task(
         computer_id=computer_id,
         command='update_package',
         payload=data.get('package_id'),
         update_id=data.get('update_id')
     )
-    return jsonify({"status": "success", "message": "Zadanie aktualizacji zlecone"})
+    return jsonify({"status": "success", "message": "Zadanie aktualizacji zlecone", "task_id": task_id})
 
 
 @bp.route('/computer/<int:computer_id>/uninstall', methods=['POST'])
 def request_uninstall(computer_id):
     data = request.get_json()
     db_manager = DatabaseManager()
-    db_manager.create_task(
+    task_id = db_manager.create_task(
         computer_id=computer_id,
         command='uninstall_package',
         payload=data.get('package_id')
     )
-    return jsonify({"status": "success", "message": "Zadanie deinstalacji zlecone"})
-
+    return jsonify({"status": "success", "message": "Zadanie deinstalacji zlecone", "task_id": task_id})
 
 @bp.route('/computer/<int:computer_id>/blacklist', methods=['POST'])
 def update_blacklist(computer_id):

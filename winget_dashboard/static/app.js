@@ -93,13 +93,16 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // Logika dla przycisków "Aktualizuj" (bez zmian)
+    /// ZMODYFIKOWANA LOGIKA DLA PRZYCISKU "AKTUALIZUJ"
     document.querySelectorAll('.update-btn:not(.uninstall-btn)').forEach(button => {
         button.addEventListener('click', function() {
             const computerId = this.dataset.computerId;
             const updateId = this.dataset.updateId;
             const packageId = this.dataset.packageId;
             const appName = this.closest('tr').cells[1].textContent;
+            const statusCell = this.closest('tr').cells[2];
+            const originalText = this.textContent;
+
             if (!confirm(`Czy na pewno chcesz zlecić aktualizację aplikacji "${appName}"?`)) return;
 
             this.textContent = 'Zlecanie...';
@@ -112,29 +115,41 @@ document.addEventListener('DOMContentLoaded', () => {
             })
             .then(response => response.json())
             .then(data => {
-                if (data.status === 'success') {
-                    this.textContent = 'Zlecono';
-                    setTimeout(forceReload, 15000);
+                if (data.status === 'success' && data.task_id) {
+                    if (statusCell) statusCell.innerHTML = '<span class="status-pending">Oczekuje...</span>';
+                    // Rozpocznij odpytywanie o status zadania aktualizacji
+                    pollTaskStatus(
+                        data.task_id,
+                        (status) => { if (statusCell) statusCell.innerHTML = `<span class="status-pending">W toku... (${status})</span>`; },
+                        (status) => forceReload(),
+                        (error) => {
+                            if (statusCell) statusCell.innerHTML = '<span class="status-fail">Błąd</span>';
+                            this.textContent = originalText;
+                            this.disabled = false;
+                        }
+                    );
                 } else {
-                    this.textContent = 'Błąd!';
-                    this.disabled = false;
-                    alert('Wystąpił błąd po stronie serwera: ' + data.message);
+                    throw new Error('Nie udało się zlecić zadania aktualizacji.');
                 }
-            }).catch(error => {
+            })
+            .catch(error => {
                 console.error("Błąd sieci:", error);
-                this.textContent = 'Błąd sieci!';
+                if (statusCell) statusCell.innerHTML = '<span class="status-fail">Błąd sieci</span>';
+                this.textContent = originalText;
                 this.disabled = false;
             });
         });
     });
 
-    // Logika dla przycisków "Odinstaluj" (bez zmian)
+    // ZMODYFIKOWANA LOGIKA DLA PRZYCISKU "ODINSTALUJ"
     document.querySelectorAll('.uninstall-btn').forEach(button => {
         button.addEventListener('click', function() {
             const computerId = this.dataset.computerId;
             const packageId = this.dataset.packageId;
             const appName = this.closest('tr').cells[0].textContent;
             const notificationBar = document.getElementById('notification-bar');
+            const originalText = this.textContent;
+
             if (!confirm(`Czy na pewno chcesz zlecić deinstalację aplikacji "${appName}"?\n\nUWAGA: Ta akcja jest nieodwracalna!`)) return;
 
             this.textContent = 'Zlecanie...';
@@ -147,22 +162,32 @@ document.addEventListener('DOMContentLoaded', () => {
             })
             .then(response => response.json())
             .then(data => {
-                if (data.status === 'success') {
-                    this.textContent = 'Zlecono';
-                    notificationBar.textContent = `Zlecono deinstalację dla "${appName}". Strona odświeży się za chwilę.`;
+                if (data.status === 'success' && data.task_id) {
+                    notificationBar.textContent = `Zlecono deinstalację dla "${appName}". Oczekuję na agenta...`;
                     notificationBar.style.backgroundColor = '#ffc107';
                     notificationBar.style.display = 'block';
-                    setTimeout(forceReload, 20000);
+                    // Rozpocznij odpytywanie o status zadania deinstalacji
+                    pollTaskStatus(
+                        data.task_id,
+                        (status) => { notificationBar.textContent = `Deinstalacja w toku... (Status: ${status})`; },
+                        (status) => forceReload(),
+                        (error) => {
+                            notificationBar.textContent = 'Błąd odpytywania!';
+                            notificationBar.style.backgroundColor = '#dc3545';
+                            this.textContent = originalText;
+                            this.disabled = false;
+                        }
+                    );
                 } else {
-                    this.textContent = 'Błąd!';
-                    this.disabled = false;
-                    notificationBar.textContent = `Wystąpił błąd podczas zlecania deinstalacji: ${data.message}`;
-                    notificationBar.style.backgroundColor = '#dc3545';
-                    notificationBar.style.display = 'block';
+                    throw new Error('Nie udało się zlecić zadania deinstalacji.');
                 }
-            }).catch(error => {
+            })
+            .catch(error => {
                 console.error("Błąd sieci:", error);
-                this.textContent = 'Błąd sieci!';
+                notificationBar.textContent = `Wystąpił błąd podczas zlecania deinstalacji: ${error.message}`;
+                notificationBar.style.backgroundColor = '#dc3545';
+                notificationBar.style.display = 'block';
+                this.textContent = originalText;
                 this.disabled = false;
             });
         });
