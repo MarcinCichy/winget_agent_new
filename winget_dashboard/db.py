@@ -53,53 +53,61 @@ class DatabaseManager:
             return False
 
         try:
-            # Krok 1: Użyj "INSERT OR IGNORE", aby atomowo utworzyć wpis komputera, jeśli nie istnieje.
-            # To polecenie wstawi wiersz z domyślną czarną listą TYLKO WTEDY, gdy komputer o danym
-            # hostname jeszcze nie istnieje. Jeśli istnieje, to polecenie nie robi absolutnie nic.
-            # Dzięki temu ręcznie zmodyfikowana czarna lista jest w 100% bezpieczna.
-            default_keywords_raw = current_app.config['DEFAULT_BLACKLIST_KEYWORDS']
-            default_keywords_list = [line.strip() for line in default_keywords_raw.strip().split('\n') if line.strip()]
-            default_blacklist_str = ", ".join(default_keywords_list)
+            # Krok 1: Sprawdź, czy komputer istnieje, ignorując wielkość liter.
+            computer_cursor = self._execute("SELECT id FROM computers WHERE hostname = ? COLLATE NOCASE", (hostname,))
+            computer = computer_cursor.fetchone()
 
-            self._execute(
-                "INSERT OR IGNORE INTO computers (hostname, blacklist_keywords) VALUES (?, ?)",
-                (hostname, default_blacklist_str)
-            )
+            if not computer:
+                # Komputer nie istnieje, więc tworzymy go z domyślną czarną listą.
+                default_keywords_raw = current_app.config['DEFAULT_BLACKLIST_KEYWORDS']
+                default_keywords_list = [line.strip() for line in default_keywords_raw.strip().split('\n') if
+                                         line.strip()]
+                default_blacklist_str = ", ".join(default_keywords_list)
 
-            # Krok 2: Teraz mamy pewność, że komputer istnieje. Pobierz jego ID i zaktualizuj dane z raportu.
-            # Ta operacja aktualizuje TYLKO te pola, które powinny pochodzić z raportu agenta.
-            computer = self._execute("SELECT id FROM computers WHERE hostname = ? COLLATE NOCASE", (hostname,)).fetchone()
+                self._execute(
+                    "INSERT INTO computers (hostname, blacklist_keywords) VALUES (?, ?)",
+                    (hostname, default_blacklist_str),
+                    commit=True)
+
+                # Pobierz ponownie, aby uzyskać ID nowo utworzonego komputera
+                computer_cursor = self._execute("SELECT id FROM computers WHERE hostname = ? COLLATE NOCASE",
+                                                (hostname,))
+                computer = computer_cursor.fetchone()
+
             computer_id = computer['id']
 
+            # Krok 2: Zaktualizuj TYLKO dane dynamiczne. Czarna lista jest świadomie pomijana.
             self._execute(
                 "UPDATE computers SET ip_address = ?, reboot_required = ?, last_report = CURRENT_TIMESTAMP WHERE id = ?",
                 (data.get('ip_address'), data.get('reboot_required', False), computer_id)
             )
 
-            # Krok 3: Zapisz szczegóły raportu (aplikacje, aktualizacje) w ramach transakcji.
-            cursor = self._execute("INSERT INTO reports (computer_id) VALUES (?)", (computer_id,))
-            report_id = cursor.lastrowid
+            # Krok 3: Zapisz szczegóły samego raportu (aplikacje i aktualizacje)
+            report_cursor = self._execute("INSERT INTO reports (computer_id) VALUES (?)", (computer_id,))
+            report_id = report_cursor.lastrowid
 
             apps_to_insert = [(report_id, app.get('name'), app.get('version'), app.get('id', 'N/A')) for app in
                               data.get('installed_apps', [])]
-            if apps_to_insert: self.db.executemany(
-                "INSERT INTO applications (report_id, name, version, app_id) VALUES (?, ?, ?, ?)", apps_to_insert)
+            if apps_to_insert:
+                self.db.executemany("INSERT INTO applications (report_id, name, version, app_id) VALUES (?, ?, ?, ?)",
+                                    apps_to_insert)
 
             app_updates_to_insert = [
                 (report_id, u.get('name'), u.get('id', 'N/A'), u.get('version'), u.get('available_version'), 'APP') for
                 u in data.get('available_app_updates', [])]
-            if app_updates_to_insert: self.db.executemany(
-                "INSERT INTO updates (report_id, name, app_id, current_version, available_version, update_type) VALUES (?, ?, ?, ?, ?, ?)",
-                app_updates_to_insert)
+            if app_updates_to_insert:
+                self.db.executemany(
+                    "INSERT INTO updates (report_id, name, app_id, current_version, available_version, update_type) VALUES (?, ?, ?, ?, ?, ?)",
+                    app_updates_to_insert)
 
             os_updates_to_insert = [
                 (report_id, u.get('Title'), u.get('KB', 'N/A'), 'N/A', 'N/A', 'OS')
                 for u in data.get('pending_os_updates', []) if isinstance(u, dict)]
-            if os_updates_to_insert: self.db.executemany(
-                "INSERT INTO updates (report_id, name, app_id, current_version, available_version, update_type) VALUES (?, ?, ?, ?, ?, ?)",
-                os_updates_to_insert)
+            if os_updates_to_insert:
+                self.db.executemany(
+                    "INSERT INTO updates (report_id, name, app_id, current_version, available_version, update_type) VALUES (?, ?, ?, ?, ?, ?)",
+                    os_updates_to_insert)
 
-            # Zatwierdź transakcję
             self.db.commit()
             return True
         except sqlite3.Error as e:
@@ -108,12 +116,12 @@ class DatabaseManager:
             return False
 
     def update_computer_blacklist(self, hostname, new_blacklist):
-        self._execute("UPDATE computers SET blacklist_keywords = ? WHERE hostname = ?", (new_blacklist, hostname),
+        self._execute("UPDATE computers SET blacklist_keywords = ? WHERE hostname = ? COLLATE NOCASE",
+                      (new_blacklist, hostname),
                       commit=True)
         logging.info(f"Zaktualizowano czarną listę dla komputera: {hostname}")
 
     def get_computer_blacklist(self, hostname):
-        # Dodano COLLATE NOCASE, aby ignorować wielkość liter w nazwie hosta
         result = self._execute("SELECT blacklist_keywords FROM computers WHERE hostname = ? COLLATE NOCASE",
                                (hostname,)).fetchone()
         return result['blacklist_keywords'] if result else ""
@@ -149,9 +157,12 @@ class DatabaseManager:
 
     def create_task(self, computer_id, command, payload, update_id=None):
         json_payload = json.dumps(payload) if isinstance(payload, dict) else payload
-        self._execute("INSERT INTO tasks (computer_id, command, payload) VALUES (?, ?, ?)",
-                      (computer_id, command, json_payload), commit=True)
-        if update_id: self._execute("UPDATE updates SET status = 'Oczekuje' WHERE id = ?", (update_id,), commit=True)
+        cursor = self._execute("INSERT INTO tasks (computer_id, command, payload) VALUES (?, ?, ?)",
+                               (computer_id, command, json_payload), commit=True)
+        task_id = cursor.lastrowid
+        if update_id:
+            self._execute("UPDATE updates SET status = 'Oczekuje' WHERE id = ?", (update_id,), commit=True)
+        return task_id
 
     def get_pending_tasks(self, hostname):
         computer = self._execute("SELECT id FROM computers WHERE hostname = ? COLLATE NOCASE", (hostname,)).fetchone()
@@ -186,3 +197,7 @@ class DatabaseManager:
             "SELECT name, app_id, current_version, available_version, update_type FROM updates WHERE report_id = ? ORDER BY update_type, name COLLATE NOCASE",
             (report_id,)).fetchall()
         return {"report": report, "apps": apps, "updates": updates}
+
+    def get_task_status(self, task_id):
+        result = self._execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        return result['status'] if result else None

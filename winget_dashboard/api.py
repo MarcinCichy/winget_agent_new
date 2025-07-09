@@ -56,6 +56,9 @@ def get_blacklist(hostname):
     db_manager = DatabaseManager()
     keywords_str = db_manager.get_computer_blacklist(hostname)
 
+    # Logujemy, co wysyłamy do agenta
+    current_app.logger.info(f"[API] Serwer wysyła do agenta '{hostname}' czarną listę z bazy: '{keywords_str}'")
+
     if not keywords_str:
         default_keywords_raw = current_app.config['DEFAULT_BLACKLIST_KEYWORDS']
         keywords_list = [line.strip() for line in default_keywords_raw.strip().split('\n') if line.strip()]
@@ -70,8 +73,9 @@ def get_blacklist(hostname):
 @bp.route('/computer/<int:computer_id>/refresh', methods=['POST'])
 def request_refresh(computer_id):
     db_manager = DatabaseManager()
-    db_manager.create_task(computer_id, 'force_report', '{}')
-    return jsonify({"status": "success", "message": "Zadanie odświeżenia zlecone"})
+    # Metoda create_task musi zwrócić ID nowo utworzonego zadania
+    task_id = db_manager.create_task(computer_id, 'force_report', '{}')
+    return jsonify({"status": "success", "message": "Zadanie odświeżenia zlecone", "task_id": task_id})
 
 
 @bp.route('/computer/<int:computer_id>/update', methods=['POST'])
@@ -120,3 +124,13 @@ def update_blacklist(computer_id):
     db_manager.update_computer_blacklist(hostname, clean_blacklist_str)
 
     return jsonify({"status": "success", "message": "Czarna lista zaktualizowana."})
+
+
+@bp.route('/task_status/<int:task_id>', methods=['GET'])
+def task_status(task_id):
+    db_manager = DatabaseManager()
+    status = db_manager.get_task_status(task_id)
+    if status:
+        return jsonify({"status": status})
+    else:
+        return jsonify({"status": "not_found"}), 404

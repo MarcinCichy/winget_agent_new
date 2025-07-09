@@ -173,6 +173,7 @@ class Agent:
         try:
             # Pobieramy najnowszą czarną listę przed każdym raportem
             self.blacklist = self.api_client.get_blacklist(self.hostname)
+            logging.info(f"[AGENT] Otrzymałem i używam czarnej listy: {self.blacklist}") # <--- NOWA LINIA
 
             report_data = {
                 "hostname": self.hostname, "ip_address": SystemInfo.get_active_ip(),
