@@ -23,17 +23,15 @@ def index():
 @bp.route('/computer/<hostname>')
 def computer_details(hostname):
     db_manager = DatabaseManager()
-
-    # 1. Pobieramy wszystkie szczegóły (tak jak wcześniej)
     details = db_manager.get_computer_details(hostname)
     if not details: abort(404)
 
-    # 2. OMIJAMY PROBLEM: Ignorujemy potencjalnie błędną czarną listę z powyższego zapytania
-    #    i zamiast tego wywołujemy funkcję, o której udowodniliśmy, że działa poprawnie.
-    editable_blacklist = db_manager.get_computer_blacklist(hostname)
+    # Omijamy problem środowiskowy przez bezpośrednie wywołanie funkcji, która działa
+    details['editable_blacklist'] = db_manager.get_computer_blacklist(hostname)
 
-    # 3. Wstawiamy poprawną wartość do słownika, który trafi do szablonu.
-    details['editable_blacklist'] = editable_blacklist
+    # Pobieramy słownik z aktywnymi zadaniami dla tego komputera
+    task_statuses = db_manager.get_computer_tasks(details['computer']['id'])
+    details['task_statuses'] = task_statuses
 
     return render_template('computer.html', **details)
 

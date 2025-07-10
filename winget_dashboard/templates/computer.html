@@ -57,15 +57,18 @@
                 <td>{{ 'System Operacyjny' if update.update_type == 'OS' else 'Aplikacja' }}</td>
                 <td>{{ update.name }}</td>
                 <td>
-                    {% if update.status == 'Oczekuje' %}<span class="status-pending">{{ update.status }}</span>
-                    {% elif update.status == 'Niepowodzenie' %}<span class="status-fail">{{ update.status }}</span>
-                    {% else %}<span>{{ update.status }}</span>{% endif %}
+                    {% if update.app_id in task_statuses %}
+                        {% set task_status = task_statuses[update.app_id] %}
+                        <span class="status-pending">{{ task_status | capitalize }}</span>
+                    {% else %}
+                        <span>Dostępna</span>
+                    {% endif %}
                 </td>
                 <td>{{ update.current_version or 'N/A' }}</td>
                 <td>{{ update.available_version or 'N/A' }}</td>
                 <td>
-                    {% if update.update_type == 'APP' and update.status != 'Oczekuje' %}
-                    <button class="action-btn update-btn" data-computer-id="{{ computer.id }}" data-update-id="{{ update.id }}" data-package-id="{{ update.app_id }}">Aktualizuj</button>
+                    {% if update.update_type == 'APP' and update.app_id not in task_statuses %}
+                    <button class="action-btn update-btn" data-computer-id="{{ computer.id }}" data-package-id="{{ update.app_id }}">Aktualizuj</button>
                     {% endif %}
                 </td>
             </tr>
@@ -84,7 +87,14 @@
                 <td>{{ app.name }}</td>
                 <td>{{ app.app_id }}</td>
                 <td>{{ app.version }}</td>
-                <td><button class="action-btn update-btn uninstall-btn" data-computer-id="{{ computer.id }}" data-package-id="{{ app.app_id }}">Odinstaluj</button></td>
+                <td>
+                    {% if app.app_id in task_statuses %}
+                        {% set task_status = task_statuses[app.app_id] %}
+                        <span class="status-pending">{{ task_status | capitalize }}</span>
+                    {% else %}
+                        <button class="action-btn update-btn uninstall-btn" data-computer-id="{{ computer.id }}" data-package-id="{{ app.app_id }}">Odinstaluj</button>
+                    {% endif %}
+                </td>
             </tr>
             {% else %}
             <tr><td colspan="4">Brak danych o aplikacjach.</td></tr>

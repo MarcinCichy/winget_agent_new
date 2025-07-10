@@ -50,39 +50,34 @@ class DatabaseManager:
         hostname = data.get('hostname')
         if not hostname:
             logging.error("Otrzymano raport bez nazwy hosta.")
-            return False
+            return None
 
         try:
-            # Krok 1: Sprawdź, czy komputer istnieje, ignorując wielkość liter.
             computer_cursor = self._execute("SELECT id FROM computers WHERE hostname = ? COLLATE NOCASE", (hostname,))
             computer = computer_cursor.fetchone()
 
             if not computer:
-                # Komputer nie istnieje, więc tworzymy go z domyślną czarną listą.
                 default_keywords_raw = current_app.config['DEFAULT_BLACKLIST_KEYWORDS']
                 default_keywords_list = [line.strip() for line in default_keywords_raw.strip().split('\n') if
                                          line.strip()]
                 default_blacklist_str = ", ".join(default_keywords_list)
 
                 self._execute(
-                    "INSERT INTO computers (hostname, blacklist_keywords) VALUES (?, ?)",
-                    (hostname, default_blacklist_str),
+                    "INSERT INTO computers (hostname, blacklist_keywords, ip_address, reboot_required) VALUES (?, ?, ?, ?)",
+                    (hostname, default_blacklist_str, data.get('ip_address'), data.get('reboot_required', False)),
                     commit=True)
 
-                # Pobierz ponownie, aby uzyskać ID nowo utworzonego komputera
                 computer_cursor = self._execute("SELECT id FROM computers WHERE hostname = ? COLLATE NOCASE",
                                                 (hostname,))
                 computer = computer_cursor.fetchone()
 
             computer_id = computer['id']
 
-            # Krok 2: Zaktualizuj TYLKO dane dynamiczne. Czarna lista jest świadomie pomijana.
             self._execute(
                 "UPDATE computers SET ip_address = ?, reboot_required = ?, last_report = CURRENT_TIMESTAMP WHERE id = ?",
                 (data.get('ip_address'), data.get('reboot_required', False), computer_id)
             )
 
-            # Krok 3: Zapisz szczegóły samego raportu (aplikacje i aktualizacje)
             report_cursor = self._execute("INSERT INTO reports (computer_id) VALUES (?)", (computer_id,))
             report_id = report_cursor.lastrowid
 
@@ -109,11 +104,11 @@ class DatabaseManager:
                     os_updates_to_insert)
 
             self.db.commit()
-            return True
+            return computer_id
         except sqlite3.Error as e:
             self.db.rollback()
             logging.error(f"Błąd transakcji podczas zapisu raportu od {hostname}: {e}", exc_info=True)
-            return False
+            return None
 
     def update_computer_blacklist(self, hostname, new_blacklist):
         self._execute("UPDATE computers SET blacklist_keywords = ? WHERE hostname = ? COLLATE NOCASE",
@@ -143,7 +138,7 @@ class DatabaseManager:
                 "SELECT name, version, app_id FROM applications WHERE report_id = ? ORDER BY name COLLATE NOCASE",
                 (report_id,)).fetchall()
             updates = self._execute(
-                "SELECT id, name, app_id, status, current_version, available_version, update_type FROM updates WHERE report_id = ? ORDER BY update_type, name COLLATE NOCASE",
+                "SELECT id, name, app_id, current_version, available_version, update_type FROM updates WHERE report_id = ? ORDER BY update_type, name COLLATE NOCASE",
                 (report_id,)).fetchall()
         return {"computer": computer, "apps": apps, "updates": updates}
 
@@ -155,14 +150,11 @@ class DatabaseManager:
             (computer['id'],)).fetchall()
         return {"computer": computer, "reports": reports}
 
-    def create_task(self, computer_id, command, payload, update_id=None):
+    def create_task(self, computer_id, command, payload):
         json_payload = json.dumps(payload) if isinstance(payload, dict) else payload
         cursor = self._execute("INSERT INTO tasks (computer_id, command, payload) VALUES (?, ?, ?)",
                                (computer_id, command, json_payload), commit=True)
-        task_id = cursor.lastrowid
-        if update_id:
-            self._execute("UPDATE updates SET status = 'Oczekuje' WHERE id = ?", (update_id,), commit=True)
-        return task_id
+        return cursor.lastrowid
 
     def get_pending_tasks(self, hostname):
         computer = self._execute("SELECT id FROM computers WHERE hostname = ? COLLATE NOCASE", (hostname,)).fetchone()
@@ -177,8 +169,12 @@ class DatabaseManager:
         return [dict(row) for row in tasks]
 
     def update_task_status(self, task_id, status):
-        self._execute("UPDATE tasks SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (status, task_id),
-                      commit=True)
+        if status in ['zakończone', 'błąd']:
+            self._execute("DELETE FROM tasks WHERE id = ?", (task_id,), commit=True)
+            logging.info(f"Usunięto zakończone/błędne zadanie o ID: {task_id}")
+        else:
+            self._execute("UPDATE tasks SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (status, task_id),
+                          commit=True)
 
     def get_computer_details_by_id(self, computer_id):
         computer = self._execute("SELECT * FROM computers WHERE id = ?", (computer_id,)).fetchone()
@@ -198,6 +194,31 @@ class DatabaseManager:
             (report_id,)).fetchall()
         return {"report": report, "apps": apps, "updates": updates}
 
+    def get_active_tasks_for_computer(self, computer_id, command_filter=None):
+        query = "SELECT id, payload, status FROM tasks WHERE computer_id = ? AND status NOT IN ('zakończone', 'błąd')"
+        params = [computer_id]
+        if command_filter:
+            query += " AND command = ?"
+            params.append(command_filter)
+        return self._execute(query, tuple(params)).fetchall()
+
+    def delete_tasks(self, task_ids):
+        if not task_ids:
+            return
+        placeholders = ','.join('?' for _ in task_ids)
+        self._execute(f"DELETE FROM tasks WHERE id IN ({placeholders})", task_ids, commit=True)
+        logging.info(f"Usunięto zadania o ID: {task_ids}")
+
+    # TA FUNKCJA BYŁA BRAKUJĄCA w jednej z poprzednich wersji
+    def get_computer_tasks(self, computer_id):
+        tasks = self._execute(
+            "SELECT payload, status FROM tasks WHERE computer_id = ? AND status NOT IN ('zakończone', 'błąd')",
+            (computer_id,)
+        ).fetchall()
+        return {row['payload']: row['status'] for row in tasks}
+
+    # TA FUNKCJA BYŁA BRAKUJĄCA w Twoim pliku
     def get_task_status(self, task_id):
         result = self._execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
-        return result['status'] if result else None
+        # Jeśli zadanie zostało usunięte (bo się zakończyło), zwróć 'zakończone'
+        return result['status'] if result else "zakończone"

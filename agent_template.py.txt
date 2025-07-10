@@ -29,13 +29,12 @@ class CommandRunner:
             full_command = f"$ProgressPreference = 'SilentlyContinue'; [System.Threading.Thread]::CurrentThread.CurrentUICulture = 'en-US'; {command}"
             result = subprocess.run(
                 ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", full_command],
-                capture_output=True, text=True, check=True, encoding='utf-8', errors='ignore',
+                capture_output=True, text=True, encoding='utf-8', errors='ignore',
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
-            return result.stdout
-        except subprocess.CalledProcessError as e:
-            error_details = f"Exit Code: {e.returncode}\nSTDOUT: {e.stdout}\nSTDERR: {e.stderr}"
-            logging.error(f"Błąd wykonania polecenia: {command}\n{error_details}")
+            return result
+        except Exception as e:
+            logging.error(f"Krytyczny błąd wykonania polecenia: {command}\n{e}")
             return None
 
 class ApiClient:
@@ -85,10 +84,11 @@ class WingetManager:
         command = f'& "{self.winget_path}" {args} --accept-source-agreements --disable-interactivity'
         return CommandRunner.run(command)
 
-    def _parse_winget_output(self, output):
-        if not output: return []
+    def _parse_winget_output(self, result_obj):
+        if not result_obj or not hasattr(result_obj, 'stdout'): return []
         apps, header_line, header_indices = [], "", {}
-        for line in output.strip().split('\n'):
+        output_str = result_obj.stdout
+        for line in output_str.strip().split('\n'):
             if 'Name' in line and 'Id' in line and 'Version' in line:
                 header_line = line
                 try:
@@ -102,10 +102,8 @@ class WingetManager:
                 name = line[:header_indices['name_end']].strip()
                 app_id = line[header_indices['name_end']:header_indices['id_end']].strip()
                 version = line[header_indices['id_end']:header_indices['version_end']].strip()
-
                 app = {"name": name, "id": app_id, "version": version}
                 if "Available" in header_line: app["available_version"] = line[header_indices['version_end']:].strip()
-
                 if app['name'] and app['id']: apps.append(app)
             except (ValueError, IndexError) as e:
                 logging.warning(f"Pominięto linię winget podczas parsowania: {line} | Błąd: {e}")
@@ -113,20 +111,43 @@ class WingetManager:
         return apps
 
     def get_installed_apps(self, blacklist):
-        output = self._run_winget('list')
-        all_apps = self._parse_winget_output(output)
+        result = self._run_winget('list')
+        if not result or result.returncode != 0:
+            logging.error(f"Nie udało się pobrać listy aplikacji. Kod: {result.returncode if result else 'N/A'}")
+            return []
+        all_apps = self._parse_winget_output(result)
         filtered = [app for app in all_apps if not any(keyword.lower() in app['name'].lower() for keyword in blacklist)]
         logging.info(f"Znaleziono {len(all_apps)} aplikacji, po filtrowaniu: {len(filtered)}.")
         return filtered
 
     def get_available_updates(self):
-        output = self._run_winget('upgrade')
-        return self._parse_winget_output(output)
+        result = self._run_winget('upgrade')
+        # Zwracamy pustą listę, jeśli polecenie nie powiodło się, ale nie logujemy jako błąd, bo to częste
+        if not result or result.returncode != 0:
+            return []
+        return self._parse_winget_output(result)
 
     def execute_task(self, command, payload):
-        if command == 'update_package': return self._run_winget(f'upgrade --id "{payload}" --silent --accept-package-agreements') is not None
-        elif command == 'uninstall_package': return self._run_winget(f'uninstall --id "{payload}" --silent --accept-package-agreements') is not None
-        return False
+        result = None
+        if command == 'update_package':
+            result = self._run_winget(f'upgrade --id "{payload}" --silent --force --accept-package-agreements')
+        elif command == 'uninstall_package':
+            result = self._run_winget(f'uninstall --id "{payload}" --silent --accept-package-agreements')
+
+        if not result:
+            return False
+
+        success = result.returncode == 0
+
+        if command == 'update_package' and not success:
+            if "Successfully installed" in result.stdout or "successfully installed" in result.stderr:
+                logging.info(f"Wykryto pomyślną aktualizację dla '{payload}' mimo kodu wyjścia {result.returncode}.")
+                success = True
+
+        if not success:
+            logging.error(f"Zadanie '{command}' dla '{payload}' nie powiodło się. Kod: {result.returncode}\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}")
+
+        return success
 
 class SystemInfo:
     @staticmethod
@@ -137,8 +158,8 @@ class SystemInfo:
         except Exception: return "127.0.0.1"
     @staticmethod
     def is_reboot_required():
-        output = CommandRunner.run("(New-Object -ComObject Microsoft.Update.SystemInfo).RebootRequired")
-        return "true" in str(output).lower()
+        result = CommandRunner.run("(New-Object -ComObject Microsoft.Update.SystemInfo).RebootRequired")
+        return result and "true" in result.stdout.lower()
 
     @staticmethod
     def get_pending_os_updates():
@@ -150,10 +171,10 @@ class SystemInfo:
             ConvertTo-Json -Depth 3
         } catch { '[]' }
         """
-        output = CommandRunner.run(command)
-        if not output: return []
+        result = CommandRunner.run(command)
+        if not result or not result.stdout: return []
         try:
-            updates = json.loads(output)
+            updates = json.loads(result.stdout)
             if isinstance(updates, dict): return [updates]
             return updates if isinstance(updates, list) else []
         except json.JSONDecodeError:
@@ -171,10 +192,7 @@ class Agent:
     def run_full_report(self):
         logging.info("Rozpoczynanie pełnego raportu...")
         try:
-            # Pobieramy najnowszą czarną listę przed każdym raportem
             self.blacklist = self.api_client.get_blacklist(self.hostname)
-            logging.info(f"[AGENT] Otrzymałem i używam czarnej listy: {self.blacklist}") # <--- NOWA LINIA
-
             report_data = {
                 "hostname": self.hostname, "ip_address": SystemInfo.get_active_ip(),
                 "reboot_required": SystemInfo.is_reboot_required(),
@@ -197,7 +215,6 @@ class Agent:
                 command, payload, task_id = task['command'], task['payload'], task['id']
                 logging.info(f"Otrzymano zadanie ID {task_id}: {command}")
 
-                # POPRAWKA: Po wykonaniu zadania force_report, agent natychmiast wysyła raport
                 if command == 'force_report':
                     self.api_client.send_task_result(task_id, 'w toku')
                     self.run_full_report()
@@ -241,23 +258,25 @@ class AgentService(win32serviceutil.ServiceFramework):
 
     def main_loop(self):
         logging.info("Uruchomiono główną pętlę agenta.")
-        try:
-            self.agent.run_full_report()
-        except Exception as e:
-            logging.error(f"Nie udało się wysłać pierwszego raportu (problem z siecią?): {e}")
+        # Usunięto blokujące wywołanie run_full_report() ze startu usługi.
+        # Raport zostanie wygenerowany w pierwszej iteracji pętli poniżej.
 
         while self.is_running:
+            # Czekaj na sygnał zatrzymania LUB upłynięcie interwału
             rc = win32event.WaitForSingleObject(self.hWaitStop, LOOP_INTERVAL * 1000)
+            # Jeśli otrzymano sygnał zatrzymania, wyjdź z pętli
             if rc == win32event.WAIT_OBJECT_0:
                 break
 
             try:
                 self.agent.check_and_execute_tasks()
+
+                # Sprawdź, czy nadszedł czas na pełny raport
                 if (time.time() - self.agent.last_report_time) >= REPORT_INTERVAL:
                     self.agent.run_full_report()
             except Exception as e:
                 logging.error(f"Nieoczekiwany błąd w pętli: {e}")
-                time.sleep(60)
+                time.sleep(60) # Odczekaj minutę po błędzie, aby uniknąć zapętlenia
 
         logging.info("Zakończono główną pętlę agenta.")
 
@@ -267,12 +286,34 @@ if __name__ == '__main__':
         servicemanager.PrepareToHostSingle(AgentService)
         servicemanager.StartServiceCtrlDispatcher()
     else:
-        try:
-            command = sys.argv[1].lower()
-            win32serviceutil.HandleCommandLine(AgentService)
-            if command == 'install': print(f"Usługa '{AgentService._svc_name_}' została pomyślnie zainstalowana.")
-            elif command == 'start': print(f"Usługa '{AgentService._svc_name_}' została uruchomiona.")
-            elif command == 'stop': print(f"Usługa '{AgentService._svc_name_}' została zatrzymana.")
-            elif command == 'remove': print(f"Usługa '{AgentService._svc_name_}' została usunięta.")
-        except pywintypes.error as e:
-            print(f"Błąd operacji na usłudze: {e.args[1]} - {e.args[2]}")
+        command = sys.argv[1].lower()
+        if command == 'status':
+            service_name = AgentService._svc_name_
+            try:
+                status_info = win32serviceutil.QueryServiceStatus(service_name)
+                status_code = status_info[1]
+                status_map = {
+                    win32service.SERVICE_STOPPED: "Zatrzymana",
+                    win32service.SERVICE_START_PENDING: "Uruchamianie...",
+                    win32service.SERVICE_STOP_PENDING: "Zatzymywanie...",
+                    win32service.SERVICE_RUNNING: "Uruchomiona",
+                    win32service.SERVICE_CONTINUE_PENDING: "Wznawianie...",
+                    win32service.SERVICE_PAUSE_PENDING: "Wstrzymywanie...",
+                    win32service.SERVICE_PAUSED: "Wstrzymana",
+                }
+                status_text = status_map.get(status_code, f"Nieznany status (kod: {status_code})")
+                print(f"Status usługi '{service_name}': {status_text}")
+            except pywintypes.error as e:
+                if e.winerror == 1060:
+                    print(f"Usługa '{service_name}' nie jest zainstalowana.")
+                else:
+                    print(f"Błąd odpytywania o status usługi: {e}")
+        else:
+            try:
+                win32serviceutil.HandleCommandLine(AgentService)
+                if command == 'install': print(f"Usługa '{AgentService._svc_name_}' została pomyślnie zainstalowana.")
+                elif command == 'start': print(f"Usługa '{AgentService._svc_name_}' została uruchomiona.")
+                elif command == 'stop': print(f"Usługa '{AgentService._svc_name_}' została zatrzymana.")
+                elif command == 'remove': print(f"Usługa '{AgentService._svc_name_}' została usunięta.")
+            except pywintypes.error as e:
+                print(f"Błąd operacji na usłudze: {e.args[1]} - {e.args[2]}")
