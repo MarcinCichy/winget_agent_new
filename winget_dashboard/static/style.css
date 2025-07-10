@@ -31,8 +31,8 @@ body {
     background-color: var(--kolor-tla);
     color: var(--kolor-tekstu);
     transition: background-color 0.2s linear, color 0.2s linear;
-    /* POPRAWKA: Ustawiono ostateczną wartość, aby nagłówek nie zakrywał treści */
-    padding-top: 16.5rem;
+    /* Zwiększony padding, aby zrobić miejsce na dwuczęściowy nagłówek */
+    padding-top: 13.5rem;
     padding-bottom: 3rem;
 }
 .main-content {
@@ -69,7 +69,7 @@ tbody tr:hover { background-color: var(--kolor-tla-hover); }
 .actions-cell { display: flex; gap: 10px; }
 .back-link { display: inline-block; font-size: 16px; margin: 0; }
 
-/* === NOWE STYLE DLA NAGŁÓWKA I EDYTORA CZARNEJ LISTY === */
+/* === Style dla nagłówka i edytora czarnej listy (computer.html) === */
 .header-sub-grid {
     display: grid;
     grid-template-columns: 2fr 1fr;
@@ -132,7 +132,6 @@ tbody tr:hover { background-color: var(--kolor-tla-hover); }
 .status-ok { color: #28a745; font-weight: bold; }
 .status-pending { color: #ffc107; font-weight: bold; }
 .status-fail { color: #dc3545; font-weight: bold; }
-/* POPRAWKA: Dodano pozycjonowanie i z-index, aby pasek był zawsze widoczny */
 #notification-bar {
     padding: 1rem;
     margin-bottom: 1rem;

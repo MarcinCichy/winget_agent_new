@@ -16,15 +16,16 @@
         <thead style="background-color: #6c757d;">
             <tr>
                 <th>Data raportu</th>
-                <th>Akcja</th>
+                <th>Akcje</th>
             </tr>
         </thead>
         <tbody>
             {% for report in reports %}
             <tr>
                 <td>{{ report.report_timestamp | to_local_time }}</td>
-                <td>
-                    <a href="{{ url_for('views.view_report', report_id=report.id) }}" class="action-btn btn-report">Zobacz szczegóły</a>
+                <td class="actions-cell">
+                    <a href="{{ url_for('views.view_report', report_id=report.id) }}" class="action-btn btn-secondary">Zobacz szczegóły</a>
+                    <a href="{{ url_for('views.report_from_history', report_id=report.id) }}" class="action-btn btn-report">Generuj raport</a>
                 </td>
             </tr>
             {% else %}

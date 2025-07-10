@@ -65,14 +65,17 @@ class ReportGenerator:
     def __init__(self, db_manager):
         self.db_manager = db_manager
 
-    def _to_local_time(self, utc_str):
-        if not utc_str: return "N/A"
+    def _to_local_time(self, utc_dt):
+        if not utc_dt: return "N/A"
         try:
-            utc_dt = datetime.fromisoformat(str(utc_str).split('.')[0]).replace(tzinfo=ZoneInfo("UTC"))
+            if isinstance(utc_dt, str):
+                utc_dt = datetime.fromisoformat(str(utc_dt).split('.')[0])
+
+            utc_dt = utc_dt.replace(tzinfo=ZoneInfo("UTC"))
             local_dt = utc_dt.astimezone(ZoneInfo("Europe/Warsaw"))
             return local_dt.strftime('%Y-%m-%d %H:%M:%S')
         except (ValueError, TypeError):
-            return utc_str
+            return str(utc_dt)
 
     def generate_report_content(self, computer_ids):
         content = []
@@ -80,35 +83,53 @@ class ReportGenerator:
             details = self.db_manager.get_computer_details_by_id(cid)
             if not details: continue
 
-            computer = details['computer']
-            content.append(f"# RAPORT DLA KOMPUTERA: {computer['hostname']} ({computer['ip_address']})")
-            content.append(f"Data ostatniego raportu: {self._to_local_time(computer['last_report'])}")
-            content.append(
-                f"Data wygenerowania pliku: {datetime.now(ZoneInfo('Europe/Warsaw')).strftime('%Y-%m-%d %H:%M:%S')}")
-            content.append("")
+            # Ujednolicamy strukturę danych, aby pasowała do `get_report_details`
+            unified_data = {
+                'report': details['computer'],
+                'apps': details['apps'],
+                'updates': details['updates']
+            }
+            content.append(self.generate_single_report_content(unified_data))
+        return "\n\n".join(content)
 
-            updates = details['updates']
-            if updates:
-                content.append("## Oczekujące aktualizacje:")
-                for item in updates:
-                    if item['update_type'] == 'OS':
-                        content.append(f"* [SYSTEM] {item['name']} ({item['app_id']})")
-                    else:
-                        content.append(
-                            f"* [APLIKACJA] {item['name']}: {item['current_version']} -> {item['available_version']}")
-            else:
-                content.append("## Brak oczekujących aktualizacji.")
+    def generate_single_report_content(self, details):
+        report_info = details['report']
+        apps = details['apps']
+        updates = details['updates']
 
-            content.append("")
+        hostname = report_info['hostname']
+        ip_address = report_info['ip_address']
 
-            # POPRAWKA: Dodajemy listę wszystkich zainstalowanych aplikacji
-            apps = details['apps']
-            if apps:
-                content.append("## Zainstalowane aplikacje:")
-                for app in apps:
-                    content.append(f"* {app['name']} (Wersja: {app['version']})")
-            else:
-                content.append("## Brak zainstalowanych aplikacji w raporcie.")
+        content = []
+        content.append(f"# RAPORT DLA KOMPUTERA: {hostname} ({ip_address})")
 
-            content.append("\n" + "=" * 80 + "\n")
+        # Czas raportu będzie w kluczu 'report_timestamp' (z historii) lub 'last_report' (dla bieżącego)
+        report_time = report_info['report_timestamp'] if 'report_timestamp' in report_info.keys() else report_info[
+            'last_report']
+        content.append(f"Data raportu: {self._to_local_time(report_time)}")
+        content.append(
+            f"Data wygenerowania pliku: {datetime.now(ZoneInfo('Europe/Warsaw')).strftime('%Y-%m-%d %H:%M:%S')}")
+        content.append("")
+
+        if updates:
+            content.append("## Oczekujące aktualizacje w raporcie:")
+            for item in updates:
+                if item['update_type'] == 'OS':
+                    content.append(f"* [SYSTEM] {item['name']} ({item['app_id']})")
+                else:
+                    content.append(
+                        f"* [APLIKACJA] {item['name']}: {item['current_version']} -> {item['available_version']}")
+        else:
+            content.append("## Brak oczekujących aktualizacji w raporcie.")
+
+        content.append("\n" + "=" * 30 + "\n")
+
+        if apps:
+            content.append("## Zainstalowane aplikacje w raporcie:")
+            for app in apps:
+                content.append(f"* {app['name']} (Wersja: {app['version']})")
+        else:
+            content.append("## Brak zainstalowanych aplikacji w raporcie.")
+
+        content.append("\n" + "=" * 80)
         return "\n".join(content)

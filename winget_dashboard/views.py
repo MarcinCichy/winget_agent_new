@@ -26,12 +26,8 @@ def computer_details(hostname):
     details = db_manager.get_computer_details(hostname)
     if not details: abort(404)
 
-    # Omijamy problem środowiskowy przez bezpośrednie wywołanie funkcji, która działa
     details['editable_blacklist'] = db_manager.get_computer_blacklist(hostname)
-
-    # Pobieramy słownik z aktywnymi zadaniami dla tego komputera
-    task_statuses = db_manager.get_computer_tasks(details['computer']['id'])
-    details['task_statuses'] = task_statuses
+    details['task_statuses'] = db_manager.get_computer_tasks(details['computer']['id'])
 
     return render_template('computer.html', **details)
 
@@ -82,7 +78,6 @@ def generate_exe():
             try:
                 if build_dir and os.path.exists(build_dir):
                     shutil.rmtree(build_dir)
-                    logging.info(f"Usunięto katalog tymczasowy: {build_dir}")
             except Exception as e:
                 logging.error(f"Nie udało się usunąć katalogu tymczasowego {build_dir}: {e}")
             return response
@@ -112,13 +107,21 @@ def favicon():
 @bp.route('/report/computer/<int:computer_id>')
 def report_single(computer_id):
     db_manager = DatabaseManager()
-    computer_data = db_manager.get_computer_details_by_id(computer_id)
-    if not computer_data:
+    details = db_manager.get_computer_details_by_id(computer_id)
+    if not details:
         abort(404)
-    computer = computer_data['computer']
+
+    # Ujednolicamy strukturę danych, aby pasowała do tej z raportu historycznego
+    unified_data = {
+        'report': details['computer'],
+        'apps': details['apps'],
+        'updates': details['updates']
+    }
 
     report_generator = ReportGenerator(db_manager)
-    content = report_generator.generate_report_content([computer_id])
+    content = report_generator.generate_single_report_content(unified_data)
+
+    computer = details['computer']
     filename = f"report_{computer['hostname']}_{datetime.now().strftime('%Y%m%d')}.txt"
     return Response(content, mimetype='text/plain', headers={"Content-disposition": f"attachment; filename={filename}"})
 
@@ -132,4 +135,23 @@ def report_all():
     report_generator = ReportGenerator(db_manager)
     content = report_generator.generate_report_content(computer_ids)
     filename = f"report_zbiorczy_{datetime.now().strftime('%Y%m%d')}.txt"
+    return Response(content, mimetype='text/plain', headers={"Content-disposition": f"attachment; filename={filename}"})
+
+
+@bp.route('/report/history/<int:report_id>')
+def report_from_history(report_id):
+    db_manager = DatabaseManager()
+    report_data = db_manager.get_report_details(report_id)
+    if not report_data:
+        abort(404)
+
+    report_generator = ReportGenerator(db_manager)
+    content = report_generator.generate_single_report_content(report_data)
+
+    report_info = report_data['report']
+    hostname = report_info['hostname']
+    report_dt = report_info['report_timestamp']
+    timestamp_str = report_dt.strftime('%Y%m%d_%H%M%S')
+    filename = f"report_{hostname}_{timestamp_str}.txt"
+
     return Response(content, mimetype='text/plain', headers={"Content-disposition": f"attachment; filename={filename}"})
