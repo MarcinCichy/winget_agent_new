@@ -1,5 +1,28 @@
 document.addEventListener('DOMContentLoaded', () => {
 
+    // --- NOWA FUNKCJA DO ZARZĄDZANIA UKŁADEM ---
+    const adjustLayout = () => {
+        const header = document.querySelector('.header-container');
+        const footer = document.querySelector('.main-footer');
+        const body = document.body;
+
+        if (header) {
+            // Pobierz wysokość nagłówka i dodaj 1.5rem (24px) marginesu
+            const headerHeight = header.offsetHeight;
+            body.style.paddingTop = `${headerHeight + 24}px`;
+        }
+        if (footer) {
+            // Pobierz wysokość stopki i dodaj 1rem (16px) marginesu
+            const footerHeight = footer.offsetHeight;
+            body.style.paddingBottom = `${footerHeight + 16}px`;
+        }
+    };
+
+    // Uruchom funkcję po załadowaniu strony i przy każdej zmianie rozmiaru okna
+    adjustLayout();
+    window.addEventListener('resize', adjustLayout);
+
+
     // --- FUNKCJE POMOCNICZE ---
     function forceReload() {
         const url = new URL(window.location);

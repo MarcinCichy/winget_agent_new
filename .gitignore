@@ -1,3 +1,10 @@
 .env
 .venv/
 .idea/
+__pycache__/
+server/__pycache__/
+winget_dashboard.db
+*.pyc
+*.pyo
+*.db
+instance/

@@ -31,9 +31,6 @@ body {
     background-color: var(--kolor-tla);
     color: var(--kolor-tekstu);
     transition: background-color 0.2s linear, color 0.2s linear;
-    /* Zwiększony padding, aby zrobić miejsce na dwuczęściowy nagłówek */
-    padding-top: 13.5rem;
-    padding-bottom: 3rem;
 }
 .main-content {
     padding-left: 2em;
@@ -101,6 +98,13 @@ tbody tr:hover { background-color: var(--kolor-tla-hover); }
     padding: 6px 12px;
     white-space: nowrap;
 }
+
+/* Nowy styl dla kontenera na przyciski w edytorze */
+.editor-actions {
+    display: flex;
+    gap: 10px;
+}
+
 .blacklist-editor textarea {
     width: 100%;
     box-sizing: border-box;
@@ -156,3 +160,35 @@ html.dark-mode #theme-toggle .moon-icon { display: none; }
 .form-group input, .form-group textarea { width: 100%; padding: 10px; border: 1px solid var(--kolor-tabeli-ramka); background-color: var(--kolor-tla-input); color: var(--kolor-tekstu); border-radius: 4px; box-sizing: border-box; }
 .form-group small { display: block; margin-top: 0.5rem; font-size: 0.85em; color: #888; }
 .form-group textarea { min-height: 120px; resize: vertical; font-family: inherit; }
+
+/* Nowe i zaktualizowane style dla formularza wyszukiwania w historii */
+.history-search-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.history-search-fields .form-group {
+    margin-bottom: 0;
+}
+
+.history-search-fields .form-group label {
+    font-size: 0.9em;
+    margin-bottom: 4px;
+    font-weight: normal;
+    color: var(--kolor-tekstu);
+}
+
+.history-search-fields .form-group input {
+    padding: 6px 8px;
+    font-size: 1em;
+}
+
+.date-range-fields {
+    display: flex;
+    gap: 10px; /* Odstęp między polami daty */
+}
+
+.date-range-fields .form-group {
+    flex: 1; /* Każde pole daty zajmuje tyle samo miejsca */
+}

@@ -35,8 +35,23 @@ def computer_details(hostname):
 @bp.route('/computer/<hostname>/history')
 def computer_history(hostname):
     db_manager = DatabaseManager()
-    history = db_manager.get_computer_history(hostname)
-    if not history: abort(404)
+
+    # Pobierz parametry wyszukiwania z zapytania URL (metoda GET)
+    search_params = {
+        'start_date': request.args.get('start_date', ''),
+        'end_date': request.args.get('end_date', ''),
+        'keyword': request.args.get('keyword', '')
+    }
+    # Utwórz "czystą" wersję do przekazania do bazy danych (bez pustych wartości)
+    clean_search_params = {k: v for k, v in search_params.items() if v}
+
+    history = db_manager.get_computer_history(hostname, search_params=clean_search_params)
+    if not history:
+        abort(404)
+
+    # Przekaż parametry wyszukiwania z powrotem do szablonu, aby wypełnić pola formularza
+    history['search_params'] = search_params
+
     return render_template('history.html', **history)
 
 

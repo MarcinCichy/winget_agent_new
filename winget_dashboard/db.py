@@ -142,12 +142,46 @@ class DatabaseManager:
                 (report_id,)).fetchall()
         return {"computer": computer, "apps": apps, "updates": updates}
 
-    def get_computer_history(self, hostname):
+    def get_computer_history(self, hostname, search_params=None):
         computer = self._execute("SELECT * FROM computers WHERE hostname = ? COLLATE NOCASE", (hostname,)).fetchone()
-        if not computer: return None
-        reports = self._execute(
-            "SELECT id, report_timestamp FROM reports WHERE computer_id = ? ORDER BY report_timestamp DESC",
-            (computer['id'],)).fetchall()
+        if not computer:
+            return None
+
+        computer_id = computer['id']
+        params = [computer_id]
+
+        query = "SELECT DISTINCT r.id, r.report_timestamp FROM reports r "
+
+        if search_params and search_params.get('keyword'):
+            query += "JOIN applications a ON r.id = a.report_id "
+
+        query += "WHERE r.computer_id = ? "
+
+        if search_params:
+            if search_params.get('keyword'):
+                query += "AND a.name LIKE ? "
+                params.append(f"%{search_params['keyword']}%")
+
+            # NOWA LOGIKA OBSŁUGI DAT
+            start_date = search_params.get('start_date')
+            end_date = search_params.get('end_date')
+
+            if start_date:
+                # Jeśli podano datę początkową, zawsze filtrujemy od jej początku
+                query += "AND r.report_timestamp >= ? "
+                params.append(f"{start_date} 00:00:00")
+
+                # Ustal datę końcową zakresu.
+                # Jeśli nie podano daty końcowej, użyj daty początkowej jako końca.
+                final_end_date = end_date if end_date else start_date
+
+                query += "AND r.report_timestamp <= ? "
+                params.append(f"{final_end_date} 23:59:59")
+
+        query += "ORDER BY r.report_timestamp DESC"
+
+        reports = self._execute(query, tuple(params)).fetchall()
+
         return {"computer": computer, "reports": reports}
 
     def create_task(self, computer_id, command, payload):
@@ -209,7 +243,6 @@ class DatabaseManager:
         self._execute(f"DELETE FROM tasks WHERE id IN ({placeholders})", task_ids, commit=True)
         logging.info(f"Usunięto zadania o ID: {task_ids}")
 
-    # TA FUNKCJA BYŁA BRAKUJĄCA w jednej z poprzednich wersji
     def get_computer_tasks(self, computer_id):
         tasks = self._execute(
             "SELECT payload, status FROM tasks WHERE computer_id = ? AND status NOT IN ('zakończone', 'błąd')",
@@ -217,8 +250,6 @@ class DatabaseManager:
         ).fetchall()
         return {row['payload']: row['status'] for row in tasks}
 
-    # TA FUNKCJA BYŁA BRAKUJĄCA w Twoim pliku
     def get_task_status(self, task_id):
         result = self._execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
-        # Jeśli zadanie zostało usunięte (bo się zakończyło), zwróć 'zakończone'
         return result['status'] if result else "zakończone"
