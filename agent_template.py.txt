@@ -44,8 +44,16 @@ class NotificationManager:
 
     @staticmethod
     def _get_ipc_path(task_id, action):
-        ipc_dir = os.path.join(os.environ.get("ProgramData", "C:/ProgramData"), "WingetAgent", "ipc")
-        os.makedirs(ipc_dir, exist_ok=True)
+        # Pobieramy ścieżkę do folderu AppData\Local dla użytkownika, jako który działa usługa.
+        local_app_data = os.environ.get('LOCALAPPDATA')
+        if not local_app_data:
+            # Plan B, gdyby zmienna środowiskowa nie była dostępna, co jest mało prawdopodobne.
+            local_app_data = os.path.join(os.path.expanduser('~'), 'AppData', 'Local')
+            logging.warning(f"Zmienna LOCALAPPDATA nie jest ustawiona. Używam ścieżki: {local_app_data}")
+
+        # Tworzymy katalog IPC w profilu użytkownika, co eliminuje problemy z uprawnieniami.
+        ipc_dir = os.path.join(local_app_data, "WingetAgent", "ipc")
+        os.makedirs(ipc_dir, exist_ok=True) # Nie potrzeba 'icacls', użytkownik jest właścicielem.
         return os.path.join(ipc_dir, f"{task_id}.{action}")
 
     @staticmethod
@@ -56,7 +64,8 @@ class NotificationManager:
         To najbardziej niezawodny sposób na wyświetlenie UI z poziomu usługi systemowej.
         """
         try:
-            # Znajdź aktywnego użytkownika
+            # Znajdź nazwę aktywnego użytkownika. To jest ważne, by zadanie odpaliło się
+            # w interaktywnej SESJI, nawet jeśli konto jest to samo.
             output = CommandRunner.run("Get-CimInstance -ClassName Win32_ComputerSystem | Select-Object -ExpandProperty UserName").stdout.strip()
             if not output:
                 logging.warning("Nie można znaleźć aktywnego użytkownika do wyświetlenia powiadomienia.")
@@ -72,37 +81,41 @@ class NotificationManager:
             with open(script_path, "w", encoding="utf-8") as f:
                 f.write(ps_script_content)
 
-            # Tworzy zadanie, które uruchamia się natychmiast i usuwa się po 30 sekundach
+            # Zbuduj polecenie PowerShell do utworzenia i uruchomienia zadania
+            # Usunęliśmy parametr '-DeleteExpiredTaskAfter', który powodował błąd XML.
             command = f"""
-            $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -File '{script_path}'"
+            $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File '{script_path}'"
             $principal = New-ScheduledTaskPrincipal -UserId '{active_user}' -LogonType Interactive
-            $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -DeleteExpiredTaskAfter (New-TimeSpan -Seconds 30)
+            $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
             Register-ScheduledTask -TaskName "{task_name}" -Action $action -Principal $principal -Settings $settings -Force
             Start-ScheduledTask -TaskName "{task_name}"
             """
-            CommandRunner.run(command)
-            logging.info(f"Zlecono wykonanie zadania '{task_name}' dla powiadomienia.")
+            result = CommandRunner.run(command)
+            if result and result.returncode == 0:
+                logging.info(f"Zlecono wykonanie zadania '{task_name}' dla powiadomienia.")
+            else:
+                logging.error(f"Nie udało się utworzyć zadania w harmonogramie '{task_name}'. Błąd: {result.stderr if result else 'Brak obiektu zwrotnego'}")
+
         except Exception as e:
-            logging.error(f"Nie udało się uruchomić skryptu jako użytkownik: {e}")
+            logging.error(f"Nie udało się uruchomić skryptu jako użytkownik: {e}", exc_info=True)
 
     @classmethod
     def show_request_notification(cls, task_id, app_name, action_type):
         title = f"Prośba o {action_type}"
         message = f"Dział IT prosi o {action_type} aplikacji '{app_name}'. Wybierz jedną z opcji."
 
-        # Tworzymy skrypty, które utworzą pliki flagowe po kliknięciu przycisku
+        # Ścieżki do skryptów tworzących flagi są teraz w temp, a same flagi w LOCALAPPDATA
         now_script_path = os.path.join(tempfile.gettempdir(), f"{task_id}_now.ps1").replace("\\", "\\\\")
-        with open(now_script_path, "w") as f: f.write(f"New-Item -Path '{cls._get_ipc_path(task_id, 'now')}' -ItemType File -Force | Out-Null")
+        with open(now_script_path, "w", encoding="utf-8") as f: f.write(f"New-Item -Path '{cls._get_ipc_path(task_id, 'now')}' -ItemType File -Force | Out-Null")
 
         shutdown_script_path = os.path.join(tempfile.gettempdir(), f"{task_id}_shutdown.ps1").replace("\\", "\\\\")
-        with open(shutdown_script_path, "w") as f: f.write(f"New-Item -Path '{cls._get_ipc_path(task_id, 'shutdown')}' -ItemType File -Force | Out-Null")
+        with open(shutdown_script_path, "w", encoding="utf-8") as f: f.write(f"New-Item -Path '{cls._get_ipc_path(task_id, 'shutdown')}' -ItemType File -Force | Out-Null")
 
         buttons_xml = f"""
-        <action content='Uruchom teraz' arguments='powershell.exe -ExecutionPolicy Bypass -File \\"{now_script_path}\\"' activationType='protocol'/>
-        <action content='Przy zamknięciu systemu' arguments='powershell.exe -ExecutionPolicy Bypass -File \\"{shutdown_script_path}\\"' activationType='protocol'/>
+        <action content='Uruchom teraz' arguments='powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File &quot;{now_script_path}&quot;' activationType='protocol'/>
+        <action content='Przy zamknięciu systemu' arguments='powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File &quot;{shutdown_script_path}&quot;' activationType='protocol'/>
         """
 
-        # Unikamy problemów z cudzysłowami w XML przez użycie pojedynczych
         buttons_xml_escaped = buttons_xml.replace('"', "'")
 
         script_content = f"""
@@ -111,7 +124,7 @@ class NotificationManager:
         $template = "<toast launch='app-defined-string'><visual><binding template='ToastGeneric'><text>{title}</text><text>{message}</text></binding></visual><actions>{buttons_xml_escaped}</actions></toast>"
         $xml = New-Object Windows.Data.Xml.Dom.XmlDocument; $xml.LoadXml($template)
         $toast = New-Object Windows.UI.Notifications.ToastNotification $xml
-        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Winget Dashboard").Show($toast)
+        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("powershell.exe").Show($toast)
         """
         cls._run_ps_as_user(script_content)
 
@@ -120,7 +133,6 @@ class NotificationManager:
         title = f"Automatyzacja nie powiodła się"
         message = f"Automatyczna {action_type} aplikacji '{app_name}' nie powiodła się. Prosimy o ręczne wykonanie tej operacji."
 
-        # Przycisk bezpośrednio uruchamia aplet panelu sterowania
         buttons_xml = "<action content='Otwórz \\'Dodaj lub usuń programy\\'' arguments='control.exe' arguments='appwiz.cpl' activationType='protocol'/>"
         buttons_xml_escaped = buttons_xml.replace('"', "'")
 
@@ -130,7 +142,7 @@ class NotificationManager:
         $template = "<toast launch='app-defined-string'><visual><binding template='ToastGeneric'><text>{title}</text><text>{message}</text></binding></visual><actions>{buttons_xml_escaped}</actions></toast>"
         $xml = New-Object Windows.Data.Xml.Dom.XmlDocument; $xml.LoadXml($template)
         $toast = New-Object Windows.UI.Notifications.ToastNotification $xml
-        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Winget Dashboard").Show($toast)
+        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("powershell.exe").Show($toast)
         """
         cls._run_ps_as_user(script_content)
 
@@ -348,10 +360,12 @@ class Agent:
 
         timeout = time.time() + 3600 # Czekaj maksymalnie godzinę na decyzję
         logging.info(f"Agent czeka na odpowiedź użytkownika dla zadania {task_id}...")
-        while time.time() < timeout:
-            now_path = NotificationManager._get_ipc_path(task_id, 'now')
-            shutdown_path = NotificationManager._get_ipc_path(task_id, 'shutdown')
 
+        # Pobieramy ścieżki raz, przed pętlą, aby nie spamować logów
+        now_path = NotificationManager._get_ipc_path(task_id, 'now')
+        shutdown_path = NotificationManager._get_ipc_path(task_id, 'shutdown')
+
+        while time.time() < timeout:
             if os.path.exists(now_path):
                 try: os.remove(now_path)
                 except OSError: pass
@@ -383,12 +397,10 @@ class Agent:
                 logging.info(f"Otrzymano zadanie ID {task['id']}: {command}")
 
                 if command in ['request_update', 'request_uninstall']:
-                    # Uruchom obsługę zadania interaktywnego w osobnym wątku,
-                    # aby nie blokować głównej pętli agenta.
                     interactive_thread = threading.Thread(
                         target=self._handle_interactive_task,
                         args=(task,),
-                        daemon=True # Wątek zostanie zabity, gdy główny program się zakończy
+                        daemon=True
                     )
                     interactive_thread.start()
                     logging.info(f"Uruchomiono osobny wątek dla zadania interaktywnego ID {task['id']}.")
@@ -412,7 +424,11 @@ class AgentService(win32serviceutil.ServiceFramework):
         self.agent = None
 
     def _setup_logging(self):
-        log_dir = os.path.join(os.environ.get("ProgramData", "C:/"), "WingetAgent")
+        # Zmieniamy ścieżkę logowania na LOCALAPPDATA, aby pasowała do IPC
+        local_app_data = os.environ.get('LOCALAPPDATA')
+        if not local_app_data:
+            local_app_data = os.path.join(os.path.expanduser('~'), 'AppData', 'Local')
+        log_dir = os.path.join(local_app_data, "WingetAgent")
         os.makedirs(log_dir, exist_ok=True)
         logging.basicConfig(filename=os.path.join(log_dir, 'agent.log'), level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -433,17 +449,27 @@ class AgentService(win32serviceutil.ServiceFramework):
 
     def main_loop(self):
         logging.info("Uruchomiono główną pętlę agenta.")
+        # Pierwszy raport zaraz po uruchomieniu
+        try:
+            self.agent.run_full_report()
+        except Exception as e:
+            logging.error(f"Błąd podczas początkowego raportu: {e}")
+
         while self.is_running:
+            # Pętla czeka na sygnał zatrzymania LUB na upłynięcie interwału
             rc = win32event.WaitForSingleObject(self.hWaitStop, LOOP_INTERVAL * 1000)
             if rc == win32event.WAIT_OBJECT_0:
+                # Otrzymano sygnał zatrzymania
                 break
+
+            # Jeśli pętla obudziła się z powodu timeout, wykonaj logikę
             try:
                 self.agent.check_and_execute_tasks()
                 if (time.time() - self.agent.last_report_time) >= REPORT_INTERVAL:
                     self.agent.run_full_report()
             except Exception as e:
                 logging.error(f"Nieoczekiwany błąd w pętli: {e}")
-                time.sleep(60)
+                time.sleep(60) # Odczekaj chwilę w razie powtarzającego się błędu
         logging.info("Zakończono główną pętlę agenta.")
 
 if __name__ == '__main__':
@@ -452,34 +478,5 @@ if __name__ == '__main__':
         servicemanager.PrepareToHostSingle(AgentService)
         servicemanager.StartServiceCtrlDispatcher()
     else:
-        command = sys.argv[1].lower()
-        if command == 'status':
-            service_name = AgentService._svc_name_
-            try:
-                status_info = win32serviceutil.QueryServiceStatus(service_name)
-                status_code = status_info[1]
-                status_map = {
-                    win32service.SERVICE_STOPPED: "Zatrzymana",
-                    win32service.SERVICE_START_PENDING: "Uruchamianie...",
-                    win32service.SERVICE_STOP_PENDING: "Zatzymywanie...",
-                    win32service.SERVICE_RUNNING: "Uruchomiona",
-                    win32service.SERVICE_CONTINUE_PENDING: "Wznawianie...",
-                    win32service.SERVICE_PAUSE_PENDING: "Wstrzymywanie...",
-                    win32service.SERVICE_PAUSED: "Wstrzymana",
-                }
-                status_text = status_map.get(status_code, f"Nieznany status (kod: {status_code})")
-                print(f"Status usługi '{service_name}': {status_text}")
-            except pywintypes.error as e:
-                if e.winerror == 1060:
-                    print(f"Usługa '{service_name}' nie jest zainstalowana.")
-                else:
-                    print(f"Błąd odpytywania o status usługi: {e}")
-        else:
-            try:
-                win32serviceutil.HandleCommandLine(AgentService)
-                if command == 'install': print(f"Usługa '{AgentService._svc_name_}' została pomyślnie zainstalowana.")
-                elif command == 'start': print(f"Usługa '{AgentService._svc_name_}' została uruchomiona.")
-                elif command == 'stop': print(f"Usługa '{AgentService._svc_name_}' została zatrzymana.")
-                elif command == 'remove': print(f"Usługa '{AgentService._svc_name_}' została usunięta.")
-            except pywintypes.error as e:
-                print(f"Błąd operacji na usłudze: {e.args[1]} - {e.args[2]}")
+        # Obsługa linii komend (install, start, etc.)
+        win32serviceutil.HandleCommandLine(AgentService)
