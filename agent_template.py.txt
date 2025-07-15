@@ -40,111 +40,113 @@ class CommandRunner:
             return None
 
 class NotificationManager:
-    """Zarządza tworzeniem i wyświetlaniem powiadomień Toast w sesji użytkownika."""
-
     @staticmethod
-    def _get_ipc_path(task_id, action):
-        # Pobieramy ścieżkę do folderu AppData\Local dla użytkownika, jako który działa usługa.
-        local_app_data = os.environ.get('LOCALAPPDATA')
-        if not local_app_data:
-            # Plan B, gdyby zmienna środowiskowa nie była dostępna, co jest mało prawdopodobne.
-            local_app_data = os.path.join(os.path.expanduser('~'), 'AppData', 'Local')
-            logging.warning(f"Zmienna LOCALAPPDATA nie jest ustawiona. Używam ścieżki: {local_app_data}")
-
-        # Tworzymy katalog IPC w profilu użytkownika, co eliminuje problemy z uprawnieniami.
-        ipc_dir = os.path.join(local_app_data, "WingetAgent", "ipc")
-        os.makedirs(ipc_dir, exist_ok=True) # Nie potrzeba 'icacls', użytkownik jest właścicielem.
-        return os.path.join(ipc_dir, f"{task_id}.{action}")
-
-    @staticmethod
-    def _run_ps_as_user(ps_script_content):
-        """
-        Tworzy i natychmiast uruchamia jednorazowe zadanie w Harmonogramie Zadań,
-        aby wykonać skrypt PowerShell w kontekście aktywnego zalogowanego użytkownika.
-        To najbardziej niezawodny sposób na wyświetlenie UI z poziomu usługi systemowej.
-        """
+    def _get_ipc_path(username: str, task_id: str, action: str):
+        if not username:
+            logging.error("Nie można zbudować ścieżki IPC bez nazwy użytkownika.")
+            return None
         try:
-            # Znajdź nazwę aktywnego użytkownika. To jest ważne, by zadanie odpaliło się
-            # w interaktywnej SESJI, nawet jeśli konto jest to samo.
-            output = CommandRunner.run("Get-CimInstance -ClassName Win32_ComputerSystem | Select-Object -ExpandProperty UserName").stdout.strip()
-            if not output:
-                logging.warning("Nie można znaleźć aktywnego użytkownika do wyświetlenia powiadomienia.")
-                return
+            system_drive = os.environ.get('SystemDrive', 'C:')
+            local_app_data = os.path.join(system_drive, 'Users', username, 'AppData', 'Local')
+            ipc_dir = os.path.join(local_app_data, "WingetAgent", "ipc")
+            return os.path.join(ipc_dir, f"{task_id}.{action}")
+        except Exception as e:
+            logging.error(f"Krytyczny błąd budowania ścieżki IPC dla użytkownika {username}: {e}")
+            return None
 
-            active_user = output
+    @staticmethod
+    def _run_ps_as_user(ps_script_content: str, active_user: str):
+        if not active_user:
+            logging.error("Próba uruchomienia skryptu bez podania nazwy aktywnego użytkownika.")
+            return
 
-            # Unikalna nazwa dla plików i zadania
+        try:
             unique_id = f"toast_{os.getpid()}_{int(time.time())}"
             script_path = os.path.join(tempfile.gettempdir(), f"{unique_id}.ps1")
             task_name = f"WingetAgent_{unique_id}"
 
-            with open(script_path, "w", encoding="utf-8") as f:
-                f.write(ps_script_content)
+            ipc_setup_command = f"New-Item -Path (Join-Path $env:LOCALAPPDATA 'WingetAgent/ipc') -ItemType Directory -Force | Out-Null"
+            final_script_content = f"{ipc_setup_command}\n\n{ps_script_content}"
 
-            # Zbuduj polecenie PowerShell do utworzenia i uruchomienia zadania
-            # Usunęliśmy parametr '-DeleteExpiredTaskAfter', który powodował błąd XML.
+            with open(script_path, "w", encoding="utf-8") as f:
+                f.write(final_script_content)
+
             command = f"""
             $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File '{script_path}'"
             $principal = New-ScheduledTaskPrincipal -UserId '{active_user}' -LogonType Interactive
             $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
             Register-ScheduledTask -TaskName "{task_name}" -Action $action -Principal $principal -Settings $settings -Force
             Start-ScheduledTask -TaskName "{task_name}"
+            Start-Sleep -Seconds 5
+            Unregister-ScheduledTask -TaskName "{task_name}" -Confirm:$false
             """
             result = CommandRunner.run(command)
             if result and result.returncode == 0:
-                logging.info(f"Zlecono wykonanie zadania '{task_name}' dla powiadomienia.")
+                logging.info(f"Zlecono wykonanie zadania '{task_name}' dla powiadomienia dla użytkownika '{active_user}'.")
             else:
-                logging.error(f"Nie udało się utworzyć zadania w harmonogramie '{task_name}'. Błąd: {result.stderr if result else 'Brak obiektu zwrotnego'}")
+                stderr = result.stderr if result else 'Brak obiektu zwrotnego'
+                logging.error(f"Nie udało się utworzyć/uruchomić zadania '{task_name}'. Błąd: {stderr}")
 
         except Exception as e:
             logging.error(f"Nie udało się uruchomić skryptu jako użytkownik: {e}", exc_info=True)
 
     @classmethod
-    def show_request_notification(cls, task_id, app_name, action_type):
-        title = f"Prośba o {action_type}"
-        message = f"Dział IT prosi o {action_type} aplikacji '{app_name}'. Wybierz jedną z opcji."
-
-        # Ścieżki do skryptów tworzących flagi są teraz w temp, a same flagi w LOCALAPPDATA
-        now_script_path = os.path.join(tempfile.gettempdir(), f"{task_id}_now.ps1").replace("\\", "\\\\")
-        with open(now_script_path, "w", encoding="utf-8") as f: f.write(f"New-Item -Path '{cls._get_ipc_path(task_id, 'now')}' -ItemType File -Force | Out-Null")
-
-        shutdown_script_path = os.path.join(tempfile.gettempdir(), f"{task_id}_shutdown.ps1").replace("\\", "\\\\")
-        with open(shutdown_script_path, "w", encoding="utf-8") as f: f.write(f"New-Item -Path '{cls._get_ipc_path(task_id, 'shutdown')}' -ItemType File -Force | Out-Null")
-
-        buttons_xml = f"""
-        <action content='Uruchom teraz' arguments='powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File &quot;{now_script_path}&quot;' activationType='protocol'/>
-        <action content='Przy zamknięciu systemu' arguments='powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File &quot;{shutdown_script_path}&quot;' activationType='protocol'/>
+    def show_notification(cls, username: str, toast_xml: str, fallback_title: str, fallback_message: str):
         """
-
-        buttons_xml_escaped = buttons_xml.replace('"', "'")
+        Wyświetla powiadomienie Toast z zaawansowanym logowaniem i fallbackiem do msg.exe.
+        """
+        escaped_xml = toast_xml.replace('"', '`"').replace('$', '`$')
+        escaped_fallback_message = fallback_message.replace('"', '`"')
 
         script_content = f"""
-        [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
-        [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null
-        $template = "<toast launch='app-defined-string'><visual><binding template='ToastGeneric'><text>{title}</text><text>{message}</text></binding></visual><actions>{buttons_xml_escaped}</actions></toast>"
-        $xml = New-Object Windows.Data.Xml.Dom.XmlDocument; $xml.LoadXml($template)
-        $toast = New-Object Windows.UI.Notifications.ToastNotification $xml
-        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("powershell.exe").Show($toast)
+        $logFile = Join-Path $env:TEMP "winget_agent_toast_log.txt"
+
+        function Write-Log {{
+            param($Message)
+            $logLine = "$([datetime]::now) - $Message"
+            Add-Content -Path $logFile -Value $logLine
+        }}
+
+        Write-Log "--- Skrypt powiadomienia uruchomiony ---"
+
+        try {{
+            Write-Log "Ładowanie modułów Windows Runtime..."
+            [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
+            [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null
+            Write-Log "Moduły załadowane pomyślnie."
+
+            $template = "{escaped_xml}"
+            Write-Log "Szablon XML przygotowany."
+
+            $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+            $xml.LoadXml($template)
+            Write-Log "XML załadowany do obiektu DOM."
+
+            $toast = New-Object Windows.UI.Notifications.ToastNotification $xml
+            Write-Log "Obiekt ToastNotification utworzony."
+
+            Write-Log "Próba wyświetlenia powiadomienia Toast..."
+            [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("powershell.exe").Show($toast)
+            Write-Log "Powiadomienie Toast zostało wysłane do systemu."
+        }}
+        catch {{
+            $errorMessage = "Błąd krytyczny przy próbie wyświetlenia Toast: $($_.Exception.Message)"
+            Write-Log $errorMessage
+
+            Write-Log "Próba użycia fallbacku do msg.exe..."
+            try {{
+                msg.exe * /TIME:30 "{escaped_fallback_message}"
+                Write-Log "Fallback do msg.exe wykonany."
+            }}
+            catch {{
+                $fallbackError = "Błąd krytyczny przy próbie fallbacku do msg.exe: $($_.Exception.Message)"
+                Write-Log $fallbackError
+            }}
+        }}
+
+        Write-Log "--- Skrypt powiadomienia zakończony ---"
         """
-        cls._run_ps_as_user(script_content)
-
-    @classmethod
-    def show_manual_action_notification(cls, app_name, action_type):
-        title = f"Automatyzacja nie powiodła się"
-        message = f"Automatyczna {action_type} aplikacji '{app_name}' nie powiodła się. Prosimy o ręczne wykonanie tej operacji."
-
-        buttons_xml = "<action content='Otwórz \\'Dodaj lub usuń programy\\'' arguments='control.exe' arguments='appwiz.cpl' activationType='protocol'/>"
-        buttons_xml_escaped = buttons_xml.replace('"', "'")
-
-        script_content = f"""
-        [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
-        [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null
-        $template = "<toast launch='app-defined-string'><visual><binding template='ToastGeneric'><text>{title}</text><text>{message}</text></binding></visual><actions>{buttons_xml_escaped}</actions></toast>"
-        $xml = New-Object Windows.Data.Xml.Dom.XmlDocument; $xml.LoadXml($template)
-        $toast = New-Object Windows.UI.Notifications.ToastNotification $xml
-        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("powershell.exe").Show($toast)
-        """
-        cls._run_ps_as_user(script_content)
+        cls._run_ps_as_user(script_content, username)
 
 
 class ApiClient:
@@ -179,6 +181,7 @@ class WingetManager:
     def _find_winget_path(self, winget_path_conf):
         if winget_path_conf and os.path.isfile(winget_path_conf):
             return winget_path_conf
+
         try:
             user_root = os.path.expandvars(r"C:\\Users")
             if os.path.isdir(user_root):
@@ -188,7 +191,15 @@ class WingetManager:
                         return winapps_path
         except Exception as e:
             logging.warning(f"Nie udało się przeszukać folderów użytkowników: {e}")
-        logging.warning("Nie znaleziono winget.exe w profilach użytkowników, próba użycia domyślnej ścieżki PATH.")
+
+        logging.info("Próba zlokalizowania winget za pomocą 'where.exe'...")
+        result = CommandRunner.run("where.exe winget")
+        if result and result.returncode == 0 and result.stdout:
+            found_path = result.stdout.strip().split('\n')[0]
+            logging.info(f"Znaleziono winget w PATH: {found_path}")
+            return found_path
+
+        logging.warning("Nie znaleziono winget.exe, próba użycia domyślnej nazwy 'winget'.")
         return "winget"
 
     def _run_winget(self, args):
@@ -246,31 +257,52 @@ class WingetManager:
             result = self._run_winget(f'uninstall --id "{payload}" --silent --accept-package-agreements')
 
         if not result:
-            return None # Zwracamy None, aby odróżnić od niepowodzenia
+            return None
 
         if result.returncode == 0:
-             return result # Sukces
+             return result
 
-        # Sprawdź, czy mimo kodu błędu, instalacja się powiodła
         if command == 'update_package' and ("Successfully installed" in result.stdout or "successfully installed" in result.stderr):
             logging.info(f"Wykryto pomyślną aktualizację dla '{payload}' mimo kodu wyjścia {result.returncode}.")
             return result
 
         logging.error(f"Zadanie '{command}' dla '{payload}' nie powiodło się. Kod: {result.returncode}\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}")
-        return result # Zwracamy obiekt result, nawet przy błędzie
+        return result
 
 
 class SystemInfo:
     @staticmethod
     def get_hostname(): return socket.gethostname()
+
     @staticmethod
     def get_active_ip():
         try: s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.connect(("8.8.8.8", 80)); ip = s.getsockname()[0]; s.close(); return ip
         except Exception: return "127.0.0.1"
+
     @staticmethod
     def is_reboot_required():
         result = CommandRunner.run("(New-Object -ComObject Microsoft.Update.SystemInfo).RebootRequired")
         return result and "true" in result.stdout.lower()
+
+    @staticmethod
+    def get_active_user():
+        logging.info("Próba znalezienia aktywnego użytkownika za pomocą 'qwinsta'...")
+        command = "qwinsta"
+        result = CommandRunner.run(command)
+        if not result or result.returncode != 0 or not result.stdout:
+            logging.warning(f"Polecenie 'qwinsta' nie powiodło się lub nie zwróciło danych.")
+            return None
+
+        for line in result.stdout.strip().split('\n'):
+            if ' active' in line.lower() or ' aktywny' in line.lower():
+                parts = [p for p in line.strip().split(' ') if p]
+                if len(parts) > 2:
+                    username = parts[1]
+                    logging.info(f"Znaleziono aktywnego użytkownika: {username}")
+                    return username
+
+        logging.warning("Nie znaleziono żadnego aktywnego użytkownika.")
+        return None
 
     @staticmethod
     def get_pending_os_updates():
@@ -293,6 +325,35 @@ class SystemInfo:
             return []
 
 class Agent:
+    REQUEST_TOAST_TEMPLATE = """
+    <toast launch="app-defined-string">
+        <visual>
+            <binding template="ToastGeneric">
+                <text>{title}</text>
+                <text>{message}</text>
+            </binding>
+        </visual>
+        <actions>
+            <action content="Uruchom teraz" arguments="powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -Command &quot;{now_action_script}&quot;" activationType="protocol"/>
+            <action content="Przy zamknięciu systemu" arguments="powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -Command &quot;{shutdown_action_script}&quot;" activationType="protocol"/>
+        </actions>
+    </toast>
+    """
+
+    MANUAL_ACTION_TOAST_TEMPLATE = """
+    <toast launch="app-defined-string">
+        <visual>
+            <binding template="ToastGeneric">
+                <text>{title}</text>
+                <text>{message}</text>
+            </binding>
+        </visual>
+        <actions>
+            <action content="Otwórz Dodaj lub usuń programy" arguments="control appwiz.cpl" activationType="protocol"/>
+        </actions>
+    </toast>
+    """
+
     def __init__(self):
         self.hostname = SystemInfo.get_hostname()
         self.api_client = ApiClient(API_ENDPOINTS, API_KEY)
@@ -348,42 +409,80 @@ class Agent:
             error_details = f"Kod wyjścia: {result.returncode if result else 'N/A'}\n\nSTDOUT:\n{result.stdout if result else ''}\n\nSTDERR:\n{result.stderr if result else ''}"
             self.api_client.send_task_result(task_id, 'niepowodzenie_interwencja_uzytkownika', error_details)
             action_type = "deinstalacja" if "uninstall" in actual_command else "aktualizacja"
-            NotificationManager.show_manual_action_notification(payload, action_type)
+
+            active_user = SystemInfo.get_active_user()
+            if active_user:
+                title = "Automatyzacja nie powiodła się"
+                message = f"Automatyczna {action_type} aplikacji '{payload}' nie powiodła się. Prosimy o ręczne wykonanie tej operacji."
+                toast_xml = self.MANUAL_ACTION_TOAST_TEMPLATE.format(title=title, message=message)
+                NotificationManager.show_notification(active_user, toast_xml, title, message)
+            else:
+                logging.warning("Nie można było pokazać powiadomienia o błędzie - brak aktywnego użytkownika.")
 
     def _handle_interactive_task(self, task):
-        task_id, command, payload = task['id'], task['command'], task['payload']
-        app_name = payload
-        action_type = "deinstalacji" if "uninstall" in command else "aktualizacji"
+        task_id = task['id']
+        try:
+            command, payload = task['command'], task['payload']
 
-        self.api_client.send_task_result(task_id, 'oczekuje_na_uzytkownika')
-        NotificationManager.show_request_notification(task_id, app_name, action_type)
-
-        timeout = time.time() + 3600 # Czekaj maksymalnie godzinę na decyzję
-        logging.info(f"Agent czeka na odpowiedź użytkownika dla zadania {task_id}...")
-
-        # Pobieramy ścieżki raz, przed pętlą, aby nie spamować logów
-        now_path = NotificationManager._get_ipc_path(task_id, 'now')
-        shutdown_path = NotificationManager._get_ipc_path(task_id, 'shutdown')
-
-        while time.time() < timeout:
-            if os.path.exists(now_path):
-                try: os.remove(now_path)
-                except OSError: pass
-                logging.info(f"Użytkownik wybrał 'Uruchom teraz' dla zadania {task_id}.")
-                self._perform_winget_action(task_id, command, payload)
+            active_user = SystemInfo.get_active_user()
+            if not active_user:
+                logging.warning(f"Zadanie interaktywne {task_id} nie może być wykonane - brak aktywnego użytkownika.")
+                self.api_client.send_task_result(task_id, 'błąd', 'Nie znaleziono aktywnego użytkownika na maszynie.')
                 return
 
-            if os.path.exists(shutdown_path):
-                try: os.remove(shutdown_path)
-                except OSError: pass
-                logging.info(f"Użytkownik wybrał 'Przy zamknięciu systemu' dla zadania {task_id}.")
-                self._schedule_task_on_shutdown(task_id, command, payload)
+            app_name = payload
+            action_type = "deinstalacji" if "uninstall" in command else "aktualizacji"
+
+            self.api_client.send_task_result(task_id, 'oczekuje_na_uzytkownika')
+
+            title = f"Prośba o {action_type}"
+            message = f"Dział IT prosi o {action_type} aplikacji '{app_name}'. Wybierz jedną z opcji."
+
+            now_ipc_path = NotificationManager._get_ipc_path(active_user, task_id, 'now')
+            shutdown_ipc_path = NotificationManager._get_ipc_path(active_user, task_id, 'shutdown')
+
+            if not now_ipc_path or not shutdown_ipc_path:
+                self.api_client.send_task_result(task_id, 'błąd', 'Nie udało się przetworzyć ścieżek IPC.')
                 return
 
-            time.sleep(5)
+            now_script = f"New-Item -Path '{now_ipc_path}' -ItemType File -Force | Out-Null".replace("'", "&apos;")
+            shutdown_script = f"New-Item -Path '{shutdown_ipc_path}' -ItemType File -Force | Out-Null".replace("'", "&apos;")
 
-        logging.warning(f"Przekroczono limit czasu na odpowiedź użytkownika dla zadania {task_id}.")
-        self.api_client.send_task_result(task_id, 'błąd', 'Przekroczono limit czasu na odpowiedź użytkownika.')
+            toast_xml = self.REQUEST_TOAST_TEMPLATE.format(
+                title=title,
+                message=message,
+                now_action_script=now_script,
+                shutdown_action_script=shutdown_script
+            )
+            fallback_message = f"{title}: {message}"
+            NotificationManager.show_notification(active_user, toast_xml, title, fallback_message)
+
+            timeout = time.time() + 3600
+            logging.info(f"Agent czeka na odpowiedź użytkownika '{active_user}' dla zadania {task_id}...")
+
+            while time.time() < timeout:
+                if os.path.exists(now_ipc_path):
+                    try: os.remove(now_ipc_path)
+                    except OSError as e: logging.warning(f"Nie udało się usunąć pliku flagi {now_ipc_path}: {e}")
+                    logging.info(f"Użytkownik wybrał 'Uruchom teraz' dla zadania {task_id}.")
+                    self._perform_winget_action(task_id, command, payload)
+                    return
+
+                if os.path.exists(shutdown_ipc_path):
+                    try: os.remove(shutdown_ipc_path)
+                    except OSError as e: logging.warning(f"Nie udało się usunąć pliku flagi {shutdown_ipc_path}: {e}")
+                    logging.info(f"Użytkownik wybrał 'Przy zamknięciu systemu' dla zadania {task_id}.")
+                    self._schedule_task_on_shutdown(task_id, command, payload)
+                    return
+
+                time.sleep(5)
+
+            logging.warning(f"Przekroczono limit czasu na odpowiedź użytkownika dla zadania {task_id}.")
+            self.api_client.send_task_result(task_id, 'błąd', 'Przekroczono limit czasu na odpowiedź użytkownika.')
+
+        except Exception as e:
+            logging.error(f"Krytyczny błąd w wątku interaktywnym dla zadania {task_id}: {e}", exc_info=True)
+            self.api_client.send_task_result(task_id, 'błąd', f"Błąd wewnętrzny agenta: {e}")
 
     def check_and_execute_tasks(self):
         logging.info("Sprawdzanie dostępności zadań...")
@@ -396,7 +495,7 @@ class Agent:
                 command = task['command']
                 logging.info(f"Otrzymano zadanie ID {task['id']}: {command}")
 
-                if command in ['request_update', 'request_uninstall']:
+                if command.startswith('request_'):
                     interactive_thread = threading.Thread(
                         target=self._handle_interactive_task,
                         args=(task,),
@@ -408,10 +507,10 @@ class Agent:
                     self.api_client.send_task_result(task['id'], 'w toku')
                     self.run_full_report()
                     self.api_client.send_task_result(task['id'], 'zakończone')
-                else: # To są zadania "force" (update_package, uninstall_package)
+                else:
                     self._perform_winget_action(task['id'], command, task['payload'])
         except Exception as e:
-            logging.error(f"Błąd podczas przetwarzania zadań: {e}")
+            logging.error(f"Błąd podczas przetwarzania zadań: {e}", exc_info=True)
 
 class AgentService(win32serviceutil.ServiceFramework):
     _svc_name_ = 'WingetDashboardAgent'
@@ -424,11 +523,8 @@ class AgentService(win32serviceutil.ServiceFramework):
         self.agent = None
 
     def _setup_logging(self):
-        # Zmieniamy ścieżkę logowania na LOCALAPPDATA, aby pasowała do IPC
-        local_app_data = os.environ.get('LOCALAPPDATA')
-        if not local_app_data:
-            local_app_data = os.path.join(os.path.expanduser('~'), 'AppData', 'Local')
-        log_dir = os.path.join(local_app_data, "WingetAgent")
+        program_data = os.environ.get('PROGRAMDATA', 'C:\\ProgramData')
+        log_dir = os.path.join(program_data, "WingetAgent")
         os.makedirs(log_dir, exist_ok=True)
         logging.basicConfig(filename=os.path.join(log_dir, 'agent.log'), level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -449,27 +545,23 @@ class AgentService(win32serviceutil.ServiceFramework):
 
     def main_loop(self):
         logging.info("Uruchomiono główną pętlę agenta.")
-        # Pierwszy raport zaraz po uruchomieniu
         try:
             self.agent.run_full_report()
         except Exception as e:
             logging.error(f"Błąd podczas początkowego raportu: {e}")
 
         while self.is_running:
-            # Pętla czeka na sygnał zatrzymania LUB na upłynięcie interwału
             rc = win32event.WaitForSingleObject(self.hWaitStop, LOOP_INTERVAL * 1000)
             if rc == win32event.WAIT_OBJECT_0:
-                # Otrzymano sygnał zatrzymania
                 break
 
-            # Jeśli pętla obudziła się z powodu timeout, wykonaj logikę
             try:
                 self.agent.check_and_execute_tasks()
                 if (time.time() - self.agent.last_report_time) >= REPORT_INTERVAL:
                     self.agent.run_full_report()
             except Exception as e:
-                logging.error(f"Nieoczekiwany błąd w pętli: {e}")
-                time.sleep(60) # Odczekaj chwilę w razie powtarzającego się błędu
+                logging.error(f"Nieoczekiwany błąd w pętli: {e}", exc_info=True)
+                time.sleep(60)
         logging.info("Zakończono główną pętlę agenta.")
 
 if __name__ == '__main__':
@@ -478,5 +570,4 @@ if __name__ == '__main__':
         servicemanager.PrepareToHostSingle(AgentService)
         servicemanager.StartServiceCtrlDispatcher()
     else:
-        # Obsługa linii komend (install, start, etc.)
         win32serviceutil.HandleCommandLine(AgentService)
