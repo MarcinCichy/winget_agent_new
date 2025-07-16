@@ -1,6 +1,5 @@
 document.addEventListener('DOMContentLoaded', () => {
 
-    // --- FUNKCJA DO ZARZĄDZANIA UKŁADEM ---
     const adjustLayout = () => {
         const header = document.querySelector('.header-container');
         const footer = document.querySelector('.main-footer');
@@ -16,12 +15,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    // Uruchom funkcję po załadowaniu strony i przy każdej zmianie rozmiaru okna
     adjustLayout();
     window.addEventListener('resize', adjustLayout);
 
 
-    // --- FUNKCJE POMOCNICZE ---
     function forceReload() {
         const url = new URL(window.location);
         url.searchParams.set('t', new Date().getTime());
@@ -30,7 +27,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const pollTaskStatus = (taskId, onUpdate, onComplete, onError) => {
         let attempts = 0;
-        const maxAttempts = 36; // 3 minuty max (36 * 5s)
+        const maxAttempts = 36;
         const interval = setInterval(() => {
             attempts++;
             if (attempts > maxAttempts) {
@@ -58,10 +55,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     console.error("Błąd odpytywania o status zadania:", err);
                     if (onError) onError(err);
                 });
-        }, 5000); // Pytaj co 5 sekund
+        }, 5000);
     };
-
-    // --- LOGIKA ELEMENTÓW ---
 
     const toggleButton = document.getElementById('theme-toggle');
     const htmlEl = document.documentElement;
@@ -72,7 +67,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // --- NOWA, ZUNIFIKOWANA LOGIKA DLA PRZYCISKÓW AKCJI Z MENU ---
     function handleActionButtonClick(e) {
         e.preventDefault();
         const target = e.target.closest('[data-action]');
@@ -123,7 +117,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         toggleBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            // Zamknij inne otwarte menu
             document.querySelectorAll('.dropdown-menu.show').forEach(otherMenu => {
                 if (otherMenu !== menu) {
                     otherMenu.classList.remove('show');
@@ -139,7 +132,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // Zamknij menu, jeśli kliknięto gdziekolwiek indziej
     window.addEventListener('click', (e) => {
         if (!e.target.closest('.action-group')) {
             document.querySelectorAll('.dropdown-menu.show').forEach(menu => {
@@ -148,7 +140,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // --- LOGIKA MODALA ---
     const modal = document.getElementById('error-modal');
     if (modal) {
         const closeBtn = modal.querySelector('.close-btn');
@@ -177,8 +168,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         };
     }
-
-    // --- POZOSTAŁE EVENT LISTENERY ---
 
     document.querySelectorAll('.refresh-btn').forEach(button => {
         button.addEventListener('click', function() {
@@ -278,28 +267,111 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    const refreshAllBtn = document.getElementById('refresh-all-btn');
-    if (refreshAllBtn) {
-        refreshAllBtn.addEventListener('click', function() {
-            if (!confirm('Czy na pewno chcesz zlecić odświeżenie dla WSZYSTKICH komputerów?')) return;
-            this.textContent = 'Wysyłanie...';
-            this.disabled = true;
-            fetch('/api/computers/refresh_all', { method: 'POST' })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'success') {
-                        alert(`${data.message}\nStrona przeładuje się automatycznie za kilka minut, aby dać agentom czas na odpowiedź.`);
-                        setTimeout(forceReload, 180000); // 3 minuty
-                    } else {
-                        alert('Wystąpił błąd podczas zlecania zadań.');
-                        this.textContent = "Odśwież wszystkie";
-                        this.disabled = false;
+    // --- NOWY KOD DO OBSŁUGI STRONY USTAWIEŃ ---
+
+    // 1. Informacja zwrotna po wygenerowaniu agenta
+    const generateAgentForm = document.getElementById('generate-agent-form');
+    if (generateAgentForm) {
+        generateAgentForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const button = document.getElementById('generate-agent-btn');
+            const originalText = button.textContent;
+            button.textContent = 'Generowanie...';
+            button.disabled = true;
+
+            const formData = new FormData(this);
+
+            fetch(this.action, {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Błąd serwera podczas generowania pliku.');
+                }
+                // Pobierz nazwę pliku z nagłówka, jeśli jest dostępna
+                const disposition = response.headers.get('Content-Disposition');
+                let filename = 'agent.exe';
+                if (disposition && disposition.indexOf('attachment') !== -1) {
+                    const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+                    const matches = filenameRegex.exec(disposition);
+                    if (matches != null && matches[1]) {
+                        filename = matches[1].replace(/['"]/g, '');
                     }
+                }
+                return response.blob().then(blob => ({ blob, filename }));
+            })
+            .then(({ blob, filename }) => {
+                // Utwórz link i zasymuluj kliknięcie, aby pobrać plik
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                a.remove();
+
+                // Informacja zwrotna dla użytkownika
+                alert('Plik agent.exe został pomyślnie wygenerowany i pobrany!');
+            })
+            .catch(error => {
+                console.error('Błąd generowania agenta:', error);
+                alert('Wystąpił błąd podczas generowania agenta. Sprawdź konsolę serwera.');
+            })
+            .finally(() => {
+                button.textContent = originalText;
+                button.disabled = false;
+            });
+        });
+    }
+
+    // 2. Obsługa niestandardowego przycisku do wgrywania plików
+    const agentFileInput = document.getElementById('agent_file_input');
+    const fileChosenLabel = document.getElementById('file-chosen-label');
+    if (agentFileInput && fileChosenLabel) {
+        agentFileInput.addEventListener('change', function() {
+            if (this.files.length > 0) {
+                fileChosenLabel.textContent = this.files[0].name;
+                fileChosenLabel.style.opacity = '1';
+                fileChosenLabel.style.fontStyle = 'normal';
+            } else {
+                fileChosenLabel.textContent = 'Nie wybrano pliku.';
+                fileChosenLabel.style.opacity = '0.7';
+                fileChosenLabel.style.fontStyle = 'italic';
+            }
+        });
+    }
+
+    // 3. Obsługa przycisku "Wdróż aktualizację" (przeniesione z poprzedniej odpowiedzi)
+    const deployBtn = document.getElementById('deploy-all-btn');
+    if (deployBtn) {
+        deployBtn.addEventListener('click', function() {
+            if (!confirm('Czy na pewno chcesz zlecić aktualizację agenta na WSZYSTKICH komputerach? Ta akcja jest nieodwracalna.')) {
+                return;
+            }
+
+            const originalText = this.textContent;
+            this.textContent = 'Wdrażanie...';
+            this.disabled = true;
+
+            fetch('/api/agent/deploy_update', { method: 'POST' })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().then(err => { throw new Error(err.message || 'Błąd serwera') });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    alert(data.message);
                 })
                 .catch(error => {
-                    console.error("Błąd sieci:", error);
-                    alert('Błąd sieci. Sprawdź konsolę.');
-                    this.textContent = "Odśwież wszystkie";
+                    console.error("Błąd wdrażania aktualizacji:", error);
+                    alert(`Wystąpił błąd: ${error.message}`);
+                })
+                .finally(() => {
+                    this.textContent = 'Wdróż aktualizację na wszystkich komputerach';
                     this.disabled = false;
                 });
         });

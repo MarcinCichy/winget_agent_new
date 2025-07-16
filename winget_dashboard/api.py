@@ -1,6 +1,7 @@
-from flask import Blueprint, request, jsonify, abort, current_app
+from flask import Blueprint, request, jsonify, abort, current_app, url_for, send_from_directory
 from functools import wraps
 from .db import DatabaseManager
+import os
 
 bp = Blueprint('api', __name__, url_prefix='/api')
 
@@ -11,6 +12,7 @@ def require_api_key(f):
         if request.headers.get('X-API-Key') and request.headers.get('X-API-Key') == current_app.config['API_KEY']:
             return f(*args, **kwargs)
         abort(401)
+
     return decorated_function
 
 
@@ -53,11 +55,11 @@ def get_tasks(hostname):
 def task_result():
     data = request.get_json()
     task_id, status = data.get('task_id'), data.get('status')
-    details = data.get('details')  # Nowy parametr
+    details = data.get('details')
     if not task_id or not status:
         return "Bad Request", 400
     db_manager = DatabaseManager()
-    db_manager.update_task_status(task_id, status, details)  # Przekazujemy szczegóły
+    db_manager.update_task_status(task_id, status, details)
     return "Result received", 200
 
 
@@ -129,13 +131,60 @@ def update_blacklist(computer_id):
 @bp.route('/task_status/<int:task_id>', methods=['GET'])
 def task_status(task_id):
     db_manager = DatabaseManager()
-    task = db_manager.get_task_details(task_id)  # Zmienione na pobieranie całego zadania
+    task = db_manager.get_task_details(task_id)
     if task:
         return jsonify(dict(task))
     else:
-        # Jeśli zadanie zostało usunięte (stara logika), zwróć status tymczasowy
-        # To dla kompatybilności wstecznej, jeśli jakieś zadania są w trakcie.
         active_task = db_manager.get_task_status(task_id)
         if active_task:
-             return jsonify({"status": active_task})
+            return jsonify({"status": active_task})
         return jsonify({"status": "zakończone"}), 200
+
+
+@bp.route('/agent/download/latest', methods=['GET'])
+def download_latest_agent():
+    builds_dir = os.path.join(current_app.root_path, '..', 'agent_builds')
+    current_app.logger.info(f"Próba serwowania pliku agent.exe z katalogu: {builds_dir}")
+    return send_from_directory(builds_dir, 'agent.exe', as_attachment=True)
+
+
+@bp.route('/computer/<int:computer_id>/agent_update', methods=['POST'])
+def request_agent_update(computer_id):
+    base_url = request.host_url.strip('/')
+    download_url = f"{base_url}{url_for('api.download_latest_agent')}"
+    payload = {'download_url': download_url}
+
+    db_manager = DatabaseManager()
+    task_id = db_manager.create_task(
+        computer_id=computer_id,
+        command='self_update',
+        payload=payload
+    )
+    current_app.logger.info(f"Zlecono zadanie aktualizacji dla komputera ID {computer_id} z URL: {download_url}")
+    return jsonify({"status": "success", "message": "Zlecono zadanie aktualizacji agenta", "task_id": task_id})
+
+
+@bp.route('/agent/deploy_update', methods=['POST'])
+def deploy_update_to_all():
+    db_manager = DatabaseManager()
+    computers = db_manager.get_all_computers()
+
+    if not computers:
+        return jsonify({"status": "warning", "message": "Brak komputerów w bazie danych do aktualizacji."}), 404
+
+    base_url = request.host_url.strip('/')
+    download_url = f"{base_url}{url_for('api.download_latest_agent')}"
+    payload = {'download_url': download_url}
+
+    tasks_created_count = 0
+    for computer in computers:
+        db_manager.create_task(
+            computer_id=computer['id'],
+            command='self_update',
+            payload=payload
+        )
+        tasks_created_count += 1
+
+    message = f"Pomyślnie zlecono zadanie aktualizacji dla {tasks_created_count} komputerów."
+    current_app.logger.info(message)
+    return jsonify({"status": "success", "message": message, "count": tasks_created_count})

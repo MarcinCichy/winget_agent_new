@@ -287,3 +287,54 @@ html.dark-mode #theme-toggle .moon-icon { display: none; }
     font-family: Consolas, "Courier New", monospace;
     font-size: 0.9em;
 }
+
+/* Nowe style dla układu strony ustawień */
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+  align-items: start;
+}
+
+.settings-panel {
+  background-color: var(--kolor-tabeli-tlo);
+  padding: 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px var(--kolor-cienia);
+  height: 100%;
+}
+
+.settings-panel h2 {
+    margin-top: 0;
+}
+
+.update-section {
+    border-top: 1px solid var(--kolor-tabeli-ramka);
+    padding-top: 1rem;
+    margin-top: 1rem;
+}
+
+.update-section:first-child {
+    border-top: none;
+    margin-top: 0;
+    padding-top: 0;
+}
+
+/* Style dla ukrytego przycisku wyboru pliku */
+.file-upload-input {
+    display: none;
+}
+
+/* Kontener dla niestandardowego przycisku i nazwy pliku */
+.file-upload-container {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+/* Nazwa wybranego pliku */
+.file-upload-label {
+    font-style: italic;
+    color: var(--kolor-tekstu);
+    opacity: 0.7;
+}

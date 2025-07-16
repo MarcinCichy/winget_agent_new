@@ -7,6 +7,7 @@ from flask import (
     flash, redirect, url_for, abort, send_from_directory, Response, after_this_request
 )
 from datetime import datetime
+from werkzeug.utils import secure_filename
 from .db import DatabaseManager
 from .services import AgentGenerator, ReportGenerator
 
@@ -36,20 +37,17 @@ def computer_details(hostname):
 def computer_history(hostname):
     db_manager = DatabaseManager()
 
-    # Pobierz parametry wyszukiwania z zapytania URL (metoda GET)
     search_params = {
         'start_date': request.args.get('start_date', ''),
         'end_date': request.args.get('end_date', ''),
         'keyword': request.args.get('keyword', '')
     }
-    # Utwórz "czystą" wersję do przekazania do bazy danych (bez pustych wartości)
     clean_search_params = {k: v for k, v in search_params.items() if v}
 
     history = db_manager.get_computer_history(hostname, search_params=clean_search_params)
     if not history:
         abort(404)
 
-    # Przekaż parametry wyszukiwania z powrotem do szablonu, aby wypełnić pola formularza
     history['search_params'] = search_params
 
     return render_template('history.html', **history)
@@ -63,11 +61,46 @@ def view_report(report_id):
     return render_template('report_view.html', **report_data)
 
 
-@bp.route('/settings')
+@bp.route('/settings', methods=['GET', 'POST'])
 def settings():
+    agent_builds_dir = os.path.join(current_app.root_path, '..', 'agent_builds')
+    os.makedirs(agent_builds_dir, exist_ok=True)
+
+    if request.method == 'POST':
+        if 'agent_file' not in request.files:
+            flash('Brak pliku w formularzu.', 'error')
+            return redirect(request.url)
+        file = request.files['agent_file']
+        if file.filename == '':
+            flash('Nie wybrano pliku.', 'error')
+            return redirect(request.url)
+        if file and file.filename.endswith('.exe'):
+            filename = 'agent.exe'
+            save_path = os.path.join(agent_builds_dir, filename)
+            try:
+                file.save(save_path)
+                flash(f'Nowa wersja agenta "{filename}" została pomyślnie wgrana.', 'success')
+            except Exception as e:
+                flash(f'Wystąpił błąd podczas zapisu pliku: {e}', 'error')
+            return redirect(url_for('views.settings'))
+        else:
+            flash('Dozwolone są tylko pliki .exe', 'error')
+            return redirect(request.url)
+
+    agent_info = None
+    agent_path = os.path.join(agent_builds_dir, 'agent.exe')
+    if os.path.exists(agent_path):
+        stat = os.stat(agent_path)
+        agent_info = {
+            'name': 'agent.exe',
+            'size_kb': round(stat.st_size / 1024, 2),
+            'modified_date': datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+        }
+
     return render_template('settings.html',
                            server_api_key=current_app.config['API_KEY'],
-                           default_blacklist_keywords=current_app.config['DEFAULT_BLACKLIST_KEYWORDS'])
+                           default_blacklist_keywords=current_app.config['DEFAULT_BLACKLIST_KEYWORDS'],
+                           agent_info=agent_info)
 
 
 @bp.route('/settings/generate_exe', methods=['POST'])
@@ -118,7 +151,6 @@ def favicon():
                                mimetype='image/vnd.microsoft.icon')
 
 
-# --- Trasy do generowania raportów ---
 @bp.route('/report/computer/<int:computer_id>')
 def report_single(computer_id):
     db_manager = DatabaseManager()
@@ -126,7 +158,6 @@ def report_single(computer_id):
     if not details:
         abort(404)
 
-    # Ujednolicamy strukturę danych, aby pasowała do tej z raportu historycznego
     unified_data = {
         'report': details['computer'],
         'apps': details['apps'],
@@ -168,5 +199,4 @@ def report_from_history(report_id):
     report_dt = report_info['report_timestamp']
     timestamp_str = report_dt.strftime('%Y%m%d_%H%M%S')
     filename = f"report_{hostname}_{timestamp_str}.txt"
-
     return Response(content, mimetype='text/plain', headers={"Content-disposition": f"attachment; filename={filename}"})
