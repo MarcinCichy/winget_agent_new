@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, abort, current_app, url_for, send_from_directory
+from flask import Blueprint, request, jsonify, abort, current_app, url_for, send_from_directory, flash
 from functools import wraps
 from .db import DatabaseManager
 import os
@@ -164,13 +164,37 @@ def request_agent_update(computer_id):
     return jsonify({"status": "success", "message": "Zlecono zadanie aktualizacji agenta", "task_id": task_id})
 
 
+@bp.route('/agent/update_status', methods=['POST'])
+def agent_update_status():
+    """Endpoint wywoływany przez updater.py po próbie aktualizacji."""
+    data = request.get_json()
+    hostname, status = data.get('hostname'), data.get('status')
+    if not hostname or not status:
+        return "Bad Request", 400
+
+    db_manager = DatabaseManager()
+    db_manager.update_agent_update_status(hostname, status)
+
+    computer_details = db_manager.get_computer_details(hostname)
+    if computer_details:
+        active_tasks = db_manager.get_active_tasks_for_computer(computer_details['computer']['id'],
+                                                                command_filter='self_update')
+        if active_tasks:
+            task_ids_to_remove = [task['id'] for task in active_tasks]
+            db_manager.delete_tasks(task_ids_to_remove)
+            current_app.logger.info(f"Wyczyszczono {len(task_ids_to_remove)} zadań self-update dla {hostname}.")
+
+    return "Status received", 200
+
+
 @bp.route('/agent/deploy_update', methods=['POST'])
 def deploy_update_to_all():
     db_manager = DatabaseManager()
     computers = db_manager.get_all_computers()
 
     if not computers:
-        return jsonify({"status": "warning", "message": "Brak komputerów w bazie danych do aktualizacji."}), 404
+        # Zmieniamy odpowiedź na bardziej czytelną dla JS
+        return jsonify({"status": "warning", "message": "Brak komputerów w bazie danych do aktualizacji."}), 200
 
     base_url = request.host_url.strip('/')
     download_url = f"{base_url}{url_for('api.download_latest_agent')}"
@@ -187,4 +211,5 @@ def deploy_update_to_all():
 
     message = f"Pomyślnie zlecono zadanie aktualizacji dla {tasks_created_count} komputerów."
     current_app.logger.info(message)
+    # Zwracamy sukces i liczbę zleconych zadań
     return jsonify({"status": "success", "message": message, "count": tasks_created_count})

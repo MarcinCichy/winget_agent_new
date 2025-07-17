@@ -71,7 +71,7 @@ document.addEventListener('DOMContentLoaded', () => {
         e.preventDefault();
         const target = e.target.closest('[data-action]');
 
-        const action = target.dataset.action;
+        const action = target.dataset.action || 'request';
         const computerId = target.dataset.computerId;
         const packageId = target.dataset.packageId;
         const force = action === 'force';
@@ -169,7 +169,8 @@ document.addEventListener('DOMContentLoaded', () => {
         };
     }
 
-    document.querySelectorAll('.refresh-btn').forEach(button => {
+    // --- LOGIKA DLA POJEDYNCZEGO PRZYCISKU ODŚWIEŻ ---
+    document.querySelectorAll('.refresh-btn[data-computer-id]').forEach(button => {
         button.addEventListener('click', function() {
             const computerId = this.dataset.computerId;
             const originalText = this.textContent;
@@ -189,6 +190,8 @@ document.addEventListener('DOMContentLoaded', () => {
                             notificationBar.textContent = 'Zlecono odświeżenie. Oczekiwanie na raport...';
                             notificationBar.style.backgroundColor = '#007bff';
                             notificationBar.style.display = 'block';
+                        } else {
+                            this.textContent = "Czekam...";
                         }
                         pollTaskStatus(
                             data.task_id,
@@ -218,6 +221,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
         });
     });
+
+    // --- NOWA, OSOBNA LOGIKA DLA "ODŚWIEŻ WSZYSTKIE" ---
+    const refreshAllBtn = document.getElementById('refresh-all-btn');
+    if(refreshAllBtn) {
+        refreshAllBtn.addEventListener('click', function() {
+            if (!confirm('Czy na pewno chcesz zlecić odświeżenie na wszystkich komputerach?')) return;
+
+            const buttons = document.querySelectorAll('.refresh-btn[data-computer-id]');
+            buttons.forEach(btn => {
+                btn.click();
+            });
+        });
+    }
+
 
     const blacklistForm = document.getElementById('blacklist-form');
     if (blacklistForm) {
@@ -267,9 +284,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // --- NOWY KOD DO OBSŁUGI STRONY USTAWIEŃ ---
-
-    // 1. Informacja zwrotna po wygenerowaniu agenta
     const generateAgentForm = document.getElementById('generate-agent-form');
     if (generateAgentForm) {
         generateAgentForm.addEventListener('submit', function(e) {
@@ -287,9 +301,8 @@ document.addEventListener('DOMContentLoaded', () => {
             })
             .then(response => {
                 if (!response.ok) {
-                    throw new Error('Błąd serwera podczas generowania pliku.');
+                    return response.text().then(text => { throw new Error(text || 'Błąd serwera podczas generowania pliku.')});
                 }
-                // Pobierz nazwę pliku z nagłówka, jeśli jest dostępna
                 const disposition = response.headers.get('Content-Disposition');
                 let filename = 'agent.exe';
                 if (disposition && disposition.indexOf('attachment') !== -1) {
@@ -302,7 +315,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 return response.blob().then(blob => ({ blob, filename }));
             })
             .then(({ blob, filename }) => {
-                // Utwórz link i zasymuluj kliknięcie, aby pobrać plik
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.style.display = 'none';
@@ -312,13 +324,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 a.click();
                 window.URL.revokeObjectURL(url);
                 a.remove();
-
-                // Informacja zwrotna dla użytkownika
                 alert('Plik agent.exe został pomyślnie wygenerowany i pobrany!');
             })
             .catch(error => {
                 console.error('Błąd generowania agenta:', error);
-                alert('Wystąpił błąd podczas generowania agenta. Sprawdź konsolę serwera.');
+                alert('Wystąpił błąd podczas generowania agenta. Sprawdź konsolę przeglądarki i logi serwera.');
             })
             .finally(() => {
                 button.textContent = originalText;
@@ -327,7 +337,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 2. Obsługa niestandardowego przycisku do wgrywania plików
     const agentFileInput = document.getElementById('agent_file_input');
     const fileChosenLabel = document.getElementById('file-chosen-label');
     if (agentFileInput && fileChosenLabel) {
@@ -344,7 +353,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 3. Obsługa przycisku "Wdróż aktualizację" (przeniesione z poprzedniej odpowiedzi)
     const deployBtn = document.getElementById('deploy-all-btn');
     if (deployBtn) {
         deployBtn.addEventListener('click', function() {
@@ -357,13 +365,11 @@ document.addEventListener('DOMContentLoaded', () => {
             this.disabled = true;
 
             fetch('/api/agent/deploy_update', { method: 'POST' })
-                .then(response => {
-                    if (!response.ok) {
-                        return response.json().then(err => { throw new Error(err.message || 'Błąd serwera') });
+                .then(response => response.json().then(data => ({ok: response.ok, data})))
+                .then(({ok, data}) => {
+                    if (!ok) {
+                        throw new Error(data.message || 'Błąd serwera');
                     }
-                    return response.json();
-                })
-                .then(data => {
                     alert(data.message);
                 })
                 .catch(error => {

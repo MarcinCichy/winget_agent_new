@@ -1,5 +1,3 @@
--- Schemat dla bazy danych SQLite
-
 DROP TABLE IF EXISTS computers;
 DROP TABLE IF EXISTS reports;
 DROP TABLE IF EXISTS applications;
@@ -8,11 +6,14 @@ DROP TABLE IF EXISTS tasks;
 
 CREATE TABLE computers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    hostname TEXT UNIQUE NOT NULL COLLATE NOCASE,
+    hostname TEXT UNIQUE NOT NULL,
     ip_address TEXT,
-    last_report TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     reboot_required BOOLEAN DEFAULT FALSE,
-    blacklist_keywords TEXT
+    last_report TIMESTAMP,
+    blacklist_keywords TEXT,
+    agent_version TEXT,
+    last_agent_update_status TEXT,
+    last_agent_update_ts TIMESTAMP
 );
 
 CREATE TABLE reports (
@@ -27,7 +28,7 @@ CREATE TABLE applications (
     report_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     version TEXT,
-    app_id TEXT,
+    app_id TEXT NOT NULL,
     FOREIGN KEY (report_id) REFERENCES reports (id) ON DELETE CASCADE
 );
 
@@ -48,7 +49,7 @@ CREATE TABLE tasks (
     command TEXT NOT NULL,
     payload TEXT,
     status TEXT DEFAULT 'oczekuje',
-    result_details TEXT, -- NOWA KOLUMNA NA SZCZEGÓŁY BŁĘDU
+    result_details TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (computer_id) REFERENCES computers (id) ON DELETE CASCADE

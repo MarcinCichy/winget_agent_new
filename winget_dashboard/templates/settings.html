@@ -13,28 +13,37 @@
 {% block content %}
     {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
+            <div id="notification-bar">
             {% for category, message in messages %}
-            <div class="notification-bar" style="background-color: {{ '#28a745' if category == 'success' else '#dc3545' }}; color: white; padding: 1rem; margin-bottom: 1rem; border-radius: 5px;">{{ message }}</div>
+                <div class="flash-message {{ category }}">{{ message }}</div>
             {% endfor %}
+            </div>
         {% endif %}
     {% endwith %}
 
     <div class="settings-grid">
         <div class="settings-panel">
             <h2>Generator Agenta</h2>
-            <p>Wypełnij poniższy formularz, aby wygenerować niestandardowy plik <strong>agent.exe</strong> z "wypalonymi" ustawieniami.</p>
+            <p>Użyj tego formularza, aby stworzyć plik instalacyjny agenta z konkretną wersją.</p>
 
             <form id="generate-agent-form" action="{{ url_for('views.generate_exe') }}" method="POST" class="settings-form">
                 <div class="form-group">
+                    <label for="agent_version">Wersja do wygenerowania:</label>
+                    <input type="text" id="agent_version" name="agent_version" value="{{ suggested_next_version }}" required>
+                    <small>Agent zostanie stworzony z tym numerem wersji.</small>
+                </div>
+                <div class="form-group">
                     <label for="api_endpoint_1">Adres serwera (API Endpoint):</label>
                     <input type="text" id="api_endpoint_1" name="api_endpoint_1" value="http://TWOJ_ADRES_IP:5000" required>
-                    <small>Podstawowy adres serwera (bez /api/report).</small>
+                    <small>Podstawowy adres serwera (bez /api na końcu).</small>
                 </div>
                 <div class="form-group">
                     <label for="api_key">Klucz API (API Key):</label>
                     <input type="text" id="api_key" name="api_key" value="{{ server_api_key }}" required>
-                    <small>Klucz API musi być identyczny jak ten w pliku .env na serwerze.</small>
+                    <small>Klucz API musi być identyczny jak ten w pliku .env serwera.</small>
                 </div>
+
+                {# --- TUTAJ SĄ PRZYWRÓCONE, BRAKUJĄCE POLA --- #}
                 <div class="form-group">
                     <label for="winget_path">Alternatywna ścieżka do winget.exe (opcjonalnie):</label>
                     <input type="text" id="winget_path" name="winget_path" value="">
@@ -50,30 +59,33 @@
                     <input type="number" id="report_interval" name="report_interval" value="3600" required>
                     <small>Co ile sekund agent ma wysyłać pełny raport o stanie.</small>
                 </div>
+
                 <button id="generate-agent-btn" type="submit" class="action-btn btn-report">Generuj agent.exe</button>
             </form>
         </div>
 
         <div class="settings-panel">
             <h2>Zarządzanie Wersją i Aktualizacjami</h2>
-            <p>Wgraj nową wersję agenta na serwer, a następnie zleć jej wdrożenie na wszystkich komputerach.</p>
-
             <div class="update-section">
                 <h3>Obecna Wersja Agenta na Serwerze</h3>
-                {% if agent_info %}
+                {% if server_agent_info.file_exists %}
                     <p>
-                        <strong>Plik:</strong> {{ agent_info.name }}<br>
-                        <strong>Rozmiar:</strong> {{ agent_info.size_kb }} KB<br>
-                        <strong>Data modyfikacji:</strong> {{ agent_info.modified_date }}
+                        <strong>Oficjalna wersja:</strong> <span class="status-ok">{{ server_agent_info.version }}</span><br>
+                        <strong>Data modyfikacji pliku .exe:</strong> {{ server_agent_info.modified_date }}
                     </p>
                 {% else %}
-                    <p class="status-fail">Na serwerze nie ma jeszcze pliku agent.exe. Wgraj go poniżej.</p>
+                    <p class="status-fail">Na serwerze nie ma jeszcze pliku agent.exe. Wgraj go poniżej, aby rozpocząć.</p>
                 {% endif %}
             </div>
 
             <div class="update-section">
-                <h3>Wgraj Nową Wersję Agenta</h3>
+                <h3>Krok 1: Wgraj Nową Wersję Agenta</h3>
+                <p>Podaj numer wersji zgodny z wgrywanym plikiem `agent.exe`.</p>
                 <form action="{{ url_for('views.settings') }}" method="POST" enctype="multipart/form-data" class="settings-form">
+                    <div class="form-group">
+                        <label for="new_version">Nowy numer wersji:</label>
+                        <input type="text" id="new_version" name="new_version" value="{{ suggested_next_version }}" required>
+                    </div>
                     <div class="form-group">
                         <label>Wybierz plik agent.exe:</label>
                         <div class="file-upload-container">
@@ -82,14 +94,14 @@
                             <span id="file-chosen-label" class="file-upload-label">Nie wybrano pliku.</span>
                         </div>
                     </div>
-                    <button type="submit" class="action-btn btn-report">Wgraj plik</button>
+                    <button type="submit" class="action-btn btn-report">Wgraj i ustaw nową wersję</button>
                 </form>
             </div>
 
             <div class="update-section">
-                <h3>Zarządzanie Wdrożeniem</h3>
-                <p>Użyj tego przycisku, aby zlecić wszystkim agentom pobranie i zainstalowanie najnowszej wersji wgranej powyżej.</p>
-                <button id="deploy-all-btn" class="action-btn btn-secondary" {% if not agent_info %}disabled{% endif %}>
+                <h3>Krok 2: Wdróż Aktualizację</h3>
+                <p>Zleć wszystkim agentom pobranie i zainstalowanie najnowszej wersji wgranej powyżej.</p>
+                <button id="deploy-all-btn" class="action-btn btn-secondary" {% if not server_agent_info.file_exists %}disabled{% endif %}>
                     Wdróż aktualizację na wszystkich komputerach
                 </button>
             </div>

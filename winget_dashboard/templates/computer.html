@@ -70,7 +70,7 @@
                 <td>
                     {% if update.update_type == 'APP' and update.app_id not in task_statuses %}
                     <div class="action-group">
-                        <button class="action-btn update-btn main-action" data-computer-id="{{ computer.id }}" data-package-id="{{ update.app_id }}" data-force="false">Poproś</button>
+                        <button class="action-btn update-btn main-action" data-action="request" data-computer-id="{{ computer.id }}" data-package-id="{{ update.app_id }}" data-force="false">Poproś</button>
                         <button class="action-btn update-btn dropdown-toggle" aria-haspopup="true" aria-expanded="false">&#9662;</button>
                         <div class="dropdown-menu">
                             <a href="#" class="dropdown-item" data-action="request" data-computer-id="{{ computer.id }}" data-package-id="{{ update.app_id }}">Poproś o aktualizację</a>
@@ -120,7 +120,7 @@
                         <button class="action-btn uninstall-btn main-action" data-computer-id="{{ computer.id }}" data-package-id="{{ app.app_id }}" data-force="false">Poproś</button>
                         <button class="action-btn uninstall-btn dropdown-toggle" aria-haspopup="true" aria-expanded="false">&#9662;</button>
                         <div class="dropdown-menu">
-                            <a href="#" class="dropdown-item" data-action="request" data-computer-id="{{ computer.id }}" data-package-id="{{ app.app_id }}">Poproś o deinstalację</a>
+                            <button class="action-btn uninstall-btn main-action" data-action="request" data-computer-id="{{ computer.id }}" data-package-id="{{ app.app_id }}" data-force="false">Poproś</button>
                             <a href="#" class="dropdown-item" data-action="force" data-computer-id="{{ computer.id }}" data-package-id="{{ app.app_id }}">Wymuś deinstalację</a>
                         </div>
                     </div>

@@ -2,7 +2,6 @@
 import os
 from dotenv import load_dotenv
 
-# Wczytaj zmienne z pliku .env
 basedir = os.path.abspath(os.path.dirname(__file__))
 load_dotenv(os.path.join(basedir, '..', '.env'))
 
@@ -12,10 +11,12 @@ class Config:
     SECRET_KEY = os.environ.get('SECRET_KEY')
     API_KEY = os.environ.get('API_KEY')
 
-    # Ścieżka do bazy danych w folderze 'instance', który jest poza głównym kodem aplikacji
+    # WRACAMY DO TEJ METODY: Ustaw tutaj wersję agenta, która jest obecnie na serwerze.
+    # Zmieniaj ją ręcznie po wgraniu nowego pliku agent.exe
+    AGENT_VERSION = "1.1.0"
+
     DATABASE = os.path.join(os.path.dirname(basedir), 'instance', 'winget_dashboard.db')
 
-    # Domyślna czarna lista używana w ustawieniach
     DEFAULT_BLACKLIST_KEYWORDS = """
 redistributable
 visual c++
@@ -31,5 +32,4 @@ outlook
 store
 vcredist
 """
-    # Ścieżka do szablonu agenta
     AGENT_TEMPLATE_PATH = os.path.join(basedir, "..", "agent_template.py.txt")
