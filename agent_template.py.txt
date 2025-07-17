@@ -6,9 +6,7 @@ import socket
 import json
 import subprocess
 import requests
-import tempfile
 import threading
-import base64
 
 import servicemanager
 import win32serviceutil
@@ -40,92 +38,30 @@ class CommandRunner:
             logging.error(f"Krytyczny błąd wykonania polecenia: {command}\n{e}")
             return None
 
-class NotificationManager:
-    @staticmethod
-    def _get_ipc_path(username: str, task_id: str, action: str):
-        if not username:
-            logging.error("Nie można zbudować ścieżki IPC bez nazwy użytkownika.")
-            return None
-        try:
-            system_drive = os.environ.get('SystemDrive', 'C:')
-            local_app_data = os.path.join(system_drive, 'Users', username, 'AppData', 'Local')
-            ipc_dir = os.path.join(local_app_data, "WingetAgent", "ipc")
-            return os.path.join(ipc_dir, f"{task_id}.{action}")
-        except Exception as e:
-            logging.error(f"Krytyczny błąd budowania ścieżki IPC dla użytkownika {username}: {e}")
-            return None
+class UiClient:
+    """Prosty klient do komunikacji z ui_helper.exe."""
+    HOST = '127.0.0.1'
+    PORT = 61900
 
     @staticmethod
-    def _run_ps_as_user(ps_script_content: str, active_user: str):
-        if not active_user:
-            logging.error("Próba uruchomienia skryptu bez podania nazwy aktywnego użytkownika.")
-            return
-
+    def send_request(request_data: dict) -> str:
         try:
-            task_name = f"WingetAgent_toast_{os.getpid()}_{int(time.time())}"
-            ipc_setup_command = f"New-Item -Path (Join-Path $env:LOCALAPPDATA 'WingetAgent/ipc') -ItemType Directory -Force | Out-Null;"
-            final_script_content = f"{ipc_setup_command}\n\n{ps_script_content}"
-
-            encoded_script = base64.b64encode(final_script_content.encode('utf-16-le')).decode('utf-8')
-
-            command = f"""
-            $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand {encoded_script}"
-            $principal = New-ScheduledTaskPrincipal -UserId '{active_user}' -LogonType Interactive
-            $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-            Register-ScheduledTask -TaskName "{task_name}" -Action $action -Principal $principal -Settings $settings -Force
-            Start-ScheduledTask -TaskName "{task_name}"
-            Start-Sleep -Seconds 5
-            Unregister-ScheduledTask -TaskName "{task_name}" -Confirm:$false
-            """
-            result = CommandRunner.run(command)
-            if result and result.returncode == 0:
-                logging.info(f"Zlecono wykonanie zadania '{task_name}' dla powiadomienia dla użytkownika '{active_user}'.")
-            else:
-                stderr = result.stderr if result else 'Brak obiektu zwrotnego'
-                logging.error(f"Nie udało się utworzyć/uruchomić zadania '{task_name}'. Błąd: {stderr}")
-
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                # Zmieniono timeout na 1 godzinę (3600 sekund)
+                s.settimeout(3600)
+                s.connect((UiClient.HOST, UiClient.PORT))
+                s.sendall(json.dumps(request_data).encode('utf-8'))
+                response = s.recv(1024).decode('utf-8')
+                return response
+        except socket.timeout:
+            logging.error("Timeout podczas oczekiwania na odpowiedź od Pomocnika UI. Użytkownik nie odpowiedział na czas.")
+            return "no_response"
+        except ConnectionRefusedError:
+            logging.error("Odmowa połączenia z Pomocnikiem UI. Czy jest uruchomiony?")
+            return "no_helper"
         except Exception as e:
-            logging.error(f"Nie udało się uruchomić skryptu jako użytkownik: {e}", exc_info=True)
-
-    @classmethod
-    def show_notification(cls, username: str, toast_xml: str, fallback_title: str, fallback_message: str):
-        escaped_xml = toast_xml.replace('"', '`"').replace('$', '`$')
-        escaped_fallback_message = fallback_message.replace('"', '`"')
-
-        script_content = f"""
-        $logFile = Join-Path $env:TEMP "winget_agent_toast_log.txt"
-        function Write-Log {{ param($Message) ; "$([datetime]::now) - $Message" | Out-File -FilePath $logFile -Append }}
-        Write-Log "--- Skrypt powiadomienia uruchomiony ---"
-        try {{
-            Write-Log "Ładowanie modułów Windows Runtime..."
-            [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
-            [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null
-            Write-Log "Moduły załadowane pomyślnie."
-            $template = "{escaped_xml}"
-            $xml = New-Object Windows.Data.Xml.Dom.XmlDocument; $xml.LoadXml($template)
-            Write-Log "XML załadowany do obiektu DOM."
-            $toast = New-Object Windows.UI.Notifications.ToastNotification $xml
-            Write-Log "Obiekt ToastNotification utworzony."
-            Write-Log "Próba wyświetlenia powiadomienia Toast..."
-            [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("powershell.exe").Show($toast)
-            Write-Log "Powiadomienie Toast zostało wysłane do systemu."
-        }}
-        catch {{
-            $errorMessage = "Błąd krytyczny przy próbie wyświetlenia Toast: $($_.Exception.Message)"
-            Write-Log $errorMessage
-            Write-Log "Próba użycia fallbacku do msg.exe..."
-            try {{
-                msg.exe * /TIME:30 "{escaped_fallback_message}"
-                Write-Log "Fallback do msg.exe wykonany."
-            }} catch {{
-                $fallbackError = "Błąd krytyczny przy próbie fallbacku do msg.exe: $($_.Exception.Message)"
-                Write-Log $fallbackError
-            }}
-        }}
-        Write-Log "--- Skrypt powiadomienia zakończony ---"
-        """
-        cls._run_ps_as_user(script_content, username)
-
+            logging.error(f"Błąd komunikacji z Pomocnikiem UI: {e}", exc_info=True)
+            return "error"
 
 class ApiClient:
     def __init__(self, endpoints, api_key):
@@ -159,7 +95,6 @@ class WingetManager:
     def _find_winget_path(self, winget_path_conf):
         if winget_path_conf and os.path.isfile(winget_path_conf):
             return winget_path_conf
-
         try:
             user_root = os.path.expandvars(r"C:\\Users")
             if os.path.isdir(user_root):
@@ -169,14 +104,12 @@ class WingetManager:
                         return winapps_path
         except Exception as e:
             logging.warning(f"Nie udało się przeszukać folderów użytkowników: {e}")
-
         logging.info("Próba zlokalizowania winget za pomocą 'where.exe'...")
         result = CommandRunner.run("where.exe winget")
         if result and result.returncode == 0 and result.stdout:
             found_path = result.stdout.strip().split('\n')[0]
             logging.info(f"Znaleziono winget w PATH: {found_path}")
             return found_path
-
         logging.warning("Nie znaleziono winget.exe, próba użycia domyślnej nazwy 'winget'.")
         return "winget"
 
@@ -186,7 +119,6 @@ class WingetManager:
         return CommandRunner.run(command)
 
     def _parse_winget_output(self, result_obj):
-        # ... (metoda bez zmian) ...
         if not result_obj or not hasattr(result_obj, 'stdout'): return []
         apps, header_line, header_indices = [], "", {}
         output_str = result_obj.stdout
@@ -213,7 +145,6 @@ class WingetManager:
         return apps
 
     def get_installed_apps(self, blacklist):
-        # ... (metoda bez zmian) ...
         result = self._run_winget('list')
         if not result or result.returncode != 0:
             logging.error(f"Nie udało się pobrać listy aplikacji. Kod: {result.returncode if result else 'N/A'}")
@@ -224,14 +155,12 @@ class WingetManager:
         return filtered
 
     def get_available_updates(self):
-        # ... (metoda bez zmian) ...
         result = self._run_winget('upgrade')
         if not result or result.returncode != 0:
             return []
         return self._parse_winget_output(result)
 
     def execute_task(self, command, payload):
-        # ... (metoda bez zmian) ...
         result = None
         if command == 'update_package':
             result = self._run_winget(f'upgrade --id "{payload}" --silent --force --accept-package-agreements')
@@ -249,7 +178,6 @@ class WingetManager:
         return result
 
 class SystemInfo:
-    # ... (klasa bez zmian) ...
     @staticmethod
     def get_hostname(): return socket.gethostname()
     @staticmethod
@@ -260,23 +188,6 @@ class SystemInfo:
     def is_reboot_required():
         result = CommandRunner.run("(New-Object -ComObject Microsoft.Update.SystemInfo).RebootRequired")
         return result and "true" in result.stdout.lower()
-    @staticmethod
-    def get_active_user():
-        logging.info("Próba znalezienia aktywnego użytkownika za pomocą 'qwinsta'...")
-        command = "qwinsta"
-        result = CommandRunner.run(command)
-        if not result or result.returncode != 0 or not result.stdout:
-            logging.warning(f"Polecenie 'qwinsta' nie powiodło się lub nie zwróciło danych.")
-            return None
-        for line in result.stdout.strip().split('\n'):
-            if ' active' in line.lower() or ' aktywny' in line.lower():
-                parts = [p for p in line.strip().split(' ') if p]
-                if len(parts) > 2:
-                    username = parts[1]
-                    logging.info(f"Znaleziono aktywnego użytkownika: {username}")
-                    return username
-        logging.warning("Nie znaleziono żadnego aktywnego użytkownika.")
-        return None
     @staticmethod
     def get_pending_os_updates():
         logging.info("Sprawdzanie aktualizacji systemu Windows...")
@@ -298,11 +209,7 @@ class SystemInfo:
             return []
 
 class Agent:
-    REQUEST_TOAST_TEMPLATE = """...""" # (bez zmian)
-    MANUAL_ACTION_TOAST_TEMPLATE = """...""" # (bez zmian)
-
     def __init__(self):
-        # ... (metoda bez zmian) ...
         self.hostname = SystemInfo.get_hostname()
         self.api_client = ApiClient(API_ENDPOINTS, API_KEY)
         self.winget_manager = WingetManager(WINGET_PATH_CONF)
@@ -310,7 +217,6 @@ class Agent:
         self.last_report_time = 0
 
     def run_full_report(self):
-        # ... (metoda bez zmian) ...
         logging.info("Rozpoczynanie pełnego raportu...")
         try:
             self.blacklist = self.api_client.get_blacklist(self.hostname)
@@ -328,7 +234,6 @@ class Agent:
             logging.error(f"Błąd krytyczny podczas wysyłania raportu: {e}", exc_info=True)
 
     def _schedule_task_on_shutdown(self, task_id, base_command, payload):
-        # ... (metoda bez zmian) ...
         logging.info(f"Tworzenie zadania w harmonogramie dla zadania {task_id} przy wylogowaniu.")
         actual_command = base_command.replace("request_", "")
         ps_command = f"& '{self.winget_manager.winget_path}' {actual_command} --id '{payload}' --silent --accept-package-agreements; Remove-ScheduledTask -TaskName 'WingetAgentTask_{task_id}' -Confirm:$false"
@@ -348,94 +253,63 @@ class Agent:
             self.api_client.send_task_result(task_id, 'błąd', result.stderr)
 
     def _perform_winget_action(self, task_id, base_command, payload):
-        # ... (metoda bez zmian) ...
         self.api_client.send_task_result(task_id, 'w_trakcie_wykonywania')
         actual_command = base_command.replace("request_", "")
         result = self.winget_manager.execute_task(actual_command, payload)
+
         if result and result.returncode == 0:
             self.api_client.send_task_result(task_id, 'zakończone')
         else:
             error_details = f"Kod wyjścia: {result.returncode if result else 'N/A'}\n\nSTDOUT:\n{result.stdout if result else ''}\n\nSTDERR:\n{result.stderr if result else ''}"
             self.api_client.send_task_result(task_id, 'niepowodzenie_interwencja_uzytkownika', error_details)
+
             action_type = "deinstalacja" if "uninstall" in actual_command else "aktualizacja"
-            active_user = SystemInfo.get_active_user()
-            if active_user:
-                title = "Automatyzacja nie powiodła się"
-                message = f"Automatyczna {action_type} aplikacji '{payload}' nie powiodła się. Prosimy o ręczne wykonanie tej operacji."
-                toast_xml = self.MANUAL_ACTION_TOAST_TEMPLATE.format(title=title, message=message)
-                NotificationManager.show_notification(active_user, toast_xml, title, message)
-            else:
-                logging.warning("Nie można było pokazać powiadomienia o błędzie - brak aktywnego użytkownika.")
+            request_data = {
+                "type": "info",
+                "title": "Automatyzacja nie powiodła się",
+                "message": f"Automatyczna {action_type} aplikacji '{payload}' nie powiodła się. Prosimy o ręczne wykonanie tej operacji."
+            }
+            UiClient.send_request(request_data)
 
     def _handle_interactive_task(self, task):
-        # ... (metoda bez zmian) ...
-        task_id = task['id']
+        task_id, command, payload = task['id'], task['command'], task['payload']
         try:
-            command, payload = task['command'], task['payload']
-
-            active_user = SystemInfo.get_active_user()
-            if not active_user:
-                logging.warning(f"Zadanie interaktywne {task_id} nie może być wykonane - brak aktywnego użytkownika.")
-                self.api_client.send_task_result(task_id, 'błąd', 'Nie znaleziono aktywnego użytkownika na maszynie.')
-                return
+            logging.info(f"Rozpoczynanie zadania interaktywnego ID {task_id}")
 
             app_name = payload
             action_type = "deinstalacji" if "uninstall" in command else "aktualizacji"
 
             self.api_client.send_task_result(task_id, 'oczekuje_na_uzytkownika')
 
-            title = f"Prośba o {action_type}"
-            message = f"Dział IT prosi o {action_type} aplikacji '{app_name}'. Wybierz jedną z opcji."
+            request_data = {
+                "type": "request",
+                "title": f"Prośba o {action_type}",
+                "message": f"Dział IT prosi o {action_type} aplikacji '{app_name}'.",
+                "detail": "Wybierz 'Tak', aby uruchomić teraz, lub 'Nie', aby zaplanować na zamknięcie systemu."
+            }
 
-            now_ipc_path = NotificationManager._get_ipc_path(active_user, task_id, 'now')
-            shutdown_ipc_path = NotificationManager._get_ipc_path(active_user, task_id, 'shutdown')
+            user_choice = UiClient.send_request(request_data)
+            logging.info(f"Otrzymano odpowiedź od użytkownika (przez Pomocnika UI): {user_choice}")
 
-            if not now_ipc_path or not shutdown_ipc_path:
-                self.api_client.send_task_result(task_id, 'błąd', 'Nie udało się przetworzyć ścieżek IPC.')
-                return
-
-            now_script = f"New-Item -Path '{now_ipc_path}' -ItemType File -Force | Out-Null".replace("'", "&apos;")
-            shutdown_script = f"New-Item -Path '{shutdown_ipc_path}' -ItemType File -Force | Out-Null".replace("'", "&apos;")
-
-            toast_xml = self.REQUEST_TOAST_TEMPLATE.format(title=title, message=message, now_action_script=now_script, shutdown_action_script=shutdown_script)
-            fallback_message = f"{title}: {message}"
-            NotificationManager.show_notification(active_user, toast_xml, title, fallback_message)
-
-            timeout = time.time() + 3600
-            logging.info(f"Agent czeka na odpowiedź użytkownika '{active_user}' dla zadania {task_id}...")
-
-            while time.time() < timeout:
-                if os.path.exists(now_ipc_path):
-                    try: os.remove(now_ipc_path)
-                    except OSError as e: logging.warning(f"Nie udało się usunąć pliku flagi {now_ipc_path}: {e}")
-                    logging.info(f"Użytkownik wybrał 'Uruchom teraz' dla zadania {task_id}.")
-                    self._perform_winget_action(task_id, command, payload)
-                    return
-
-                if os.path.exists(shutdown_ipc_path):
-                    try: os.remove(shutdown_ipc_path)
-                    except OSError as e: logging.warning(f"Nie udało się usunąć pliku flagi {shutdown_ipc_path}: {e}")
-                    logging.info(f"Użytkownik wybrał 'Przy zamknięciu systemu' dla zadania {task_id}.")
-                    self._schedule_task_on_shutdown(task_id, command, payload)
-                    return
-
-                time.sleep(5)
-            logging.warning(f"Przekroczono limit czasu na odpowiedź użytkownika dla zadania {task_id}.")
-            self.api_client.send_task_result(task_id, 'błąd', 'Przekroczono limit czasu na odpowiedź użytkownika.')
+            if user_choice == "now":
+                self._perform_winget_action(task_id, command, payload)
+            elif user_choice == "shutdown":
+                self._schedule_task_on_shutdown(task_id, command, payload)
+            else:
+                logging.warning(f"Zadanie {task_id} nie powiodło się - brak odpowiedzi od użytkownika lub błąd Pomocnika UI.")
+                self.api_client.send_task_result(task_id, 'błąd', 'Brak odpowiedzi od użytkownika lub błąd pomocnika UI.')
 
         except Exception as e:
-            logging.error(f"Krytyczny błąd w wątku interaktywnym dla zadania {task_id}: {e}", exc_info=True)
+            logging.error(f"Krytyczny błąd w obsłudze zadania interaktywnego {task_id}: {e}", exc_info=True)
             self.api_client.send_task_result(task_id, 'błąd', f"Błąd wewnętrzny agenta: {e}")
 
     def _handle_self_update(self, task, service_framework):
         try:
-            # POPRAWKA: Konwertujemy tekstowy payload (JSON) na słownik Pythona
             payload_dict = json.loads(task['payload'])
             download_url = payload_dict['download_url']
 
             logging.info(f"Otrzymano zadanie aktualizacji agenta z URL: {download_url}")
 
-            # Określenie ścieżek
             current_agent_path = sys.executable
             agent_dir = os.path.dirname(current_agent_path)
             new_agent_path = os.path.join(agent_dir, "agent_new.exe")
@@ -446,7 +320,6 @@ class Agent:
                 self.api_client.send_task_result(task['id'], 'błąd', 'Nie znaleziono updater.exe')
                 return
 
-            # Krok 1: Pobierz nową wersję agenta
             logging.info(f"Pobieranie nowej wersji agenta do: {new_agent_path}")
             response = requests.get(download_url, stream=True)
             response.raise_for_status()
@@ -455,19 +328,11 @@ class Agent:
                     f.write(chunk)
             logging.info("Pobieranie zakończone.")
 
-            # Krok 2: Uruchom updater w osobnym procesie
             service_name = service_framework._svc_name_
-            command = [
-                updater_path,
-                str(os.getpid()),
-                new_agent_path,
-                current_agent_path,
-                service_name
-            ]
+            command = [updater_path, str(os.getpid()), new_agent_path, current_agent_path, service_name]
             logging.info(f"Uruchamianie updater.exe z poleceniem: {command}")
             subprocess.Popen(command, creationflags=subprocess.DETACHED_PROCESS)
 
-            # Krok 3: Zatrzymaj bieżącą usługę
             logging.info("Agent zatrzymuje usługę, aby umożliwić aktualizację...")
             self.api_client.send_task_result(task['id'], 'w_trakcie_aktualizacji')
             service_framework.SvcStop()
@@ -536,7 +401,6 @@ class AgentService(win32serviceutil.ServiceFramework):
             self.SvcStop()
 
     def main_loop(self, service_framework):
-        logging.info("--- Agent w wersji 2.0 pomyślnie uruchomiony! ---") # DODAJ TĘ LINIĘ
         logging.info("Uruchomiono główną pętlę agenta.")
         try:
             self.agent.run_full_report()
