@@ -27,7 +27,7 @@ WINGET_PATH_CONF = r"__WINGET_PATH__"
 
 class CommandRunner:
     @staticmethod
-    def run(command: str, timeout: int = 600):
+    def run(command: str, timeout: int = 1800):
         try:
             full_command = f"$ProgressPreference = 'SilentlyContinue'; [System.Threading.Thread]::CurrentThread.CurrentUICulture = 'en-US'; {command}"
             result = subprocess.run(
@@ -120,10 +120,6 @@ class WingetManager:
         result = CommandRunner.run("where.exe winget", timeout=10)
         if result and result.returncode == 0 and result.stdout: return result.stdout.strip().split('\n')[0]
         return "winget"
-    def _run_winget(self, args):
-        if not self.winget_path: return None
-        command = f'& "{self.winget_path}" {args} --accept-source-agreements --disable-interactivity'
-        return CommandRunner.run(command)
     def _parse_winget_output(self, result_obj):
         if not result_obj or not hasattr(result_obj, 'stdout'): return []
         apps, header_line, header_indices = [], "", {}
@@ -146,12 +142,12 @@ class WingetManager:
             except (ValueError, IndexError) as e: logging.warning(f"Pominięto linię winget: {line} | Błąd: {e}")
         return apps
     def get_installed_apps(self, blacklist):
-        result = self._run_winget('list')
+        result = CommandRunner.run(f'& "{self.winget_path}" list --accept-source-agreements --disable-interactivity')
         if not result or result.returncode != 0: return []
         all_apps = self._parse_winget_output(result)
         return [app for app in all_apps if not any(keyword.lower() in app['name'].lower() for keyword in blacklist)]
     def get_available_updates(self):
-        result = self._run_winget('upgrade')
+        result = CommandRunner.run(f'& "{self.winget_path}" upgrade --accept-source-agreements --disable-interactivity')
         return self._parse_winget_output(result) if result and result.returncode == 0 else []
 
 class SystemInfo:
@@ -169,7 +165,8 @@ class SystemInfo:
     def get_pending_os_updates():
         command = """
         try {
-            (New-Object -ComObject Microsoft.Update.Session).CreateUpdateSearcher().Search("IsInstalled=0 and Type='Software' and IsHidden=0").Updates |
+            $searcher = (New-Object -ComObject Microsoft.Update.Session).CreateUpdateSearcher()
+            $searcher.Search("IsInstalled=0 and Type='Software' and IsHidden=0").Updates |
             Select-Object Title, @{Name='KB';Expression={$_.KBArticleIDs -join ', '}} | ConvertTo-Json -Depth 3
         } catch { '[]' }
         """
@@ -197,77 +194,123 @@ class Agent:
             self.last_report_time = time.time()
         except Exception as e: logging.error(f"Błąd krytyczny podczas wysyłania raportu: {e}", exc_info=True)
 
-    def _schedule_task_on_shutdown(self, task_id, base_command, payload):
-        # --- CAŁKOWICIE NOWA, ZDELEGOWANA LOGIKA ---
+    def _get_os_update_script(self):
+        return """
+        Write-Host "Rozpoczynanie sesji Windows Update..."
+        $updateSession = New-Object -ComObject Microsoft.Update.Session
+        $updateSearcher = $updateSession.CreateUpdateSearcher()
+        Write-Host "Wyszukiwanie dostępnych aktualizacji..."
+        $searchResult = $updateSearcher.Search("IsInstalled=0 and Type='Software'").Updates
+        if ($searchResult.Count -eq 0) {
+            Write-Host "Brak dostępnych aktualizacji."
+            exit 0
+        }
+        Write-Host "Znaleziono $($searchResult.Count) aktualizacji. Pobieranie..."
+        $downloader = $updateSession.CreateUpdateDownloader()
+        $downloader.Updates = $searchResult
+        $downloader.Download()
+        $updatesToInstall = New-Object -ComObject Microsoft.Update.UpdateColl
+        foreach ($update in $searchResult) {
+            if ($update.IsDownloaded) { $updatesToInstall.Add($update) | Out-Null }
+        }
+        if ($updatesToInstall.Count -eq 0) {
+            Write-Host "Aktualizacje zostały znalezione, ale nie udało się ich pobrać."
+            exit 1
+        }
+        Write-Host "Instalowanie $($updatesToInstall.Count) aktualizacji..."
+        $installer = $updateSession.CreateUpdateInstaller()
+        $installer.Updates = $updatesToInstall
+        $result = $installer.Install()
+        Write-Host "Instalacja zakończona. Kod wyniku: $($result.ResultCode). Wymagany restart: $($result.RebootRequired)"
+        if ($result.ResultCode -ne 2) { exit 1 }
+        exit 0
+        """
+
+    def _schedule_task_on_logon(self, task_id, base_command, payload):
         task_name = f"WingetAgentTask_{task_id}"
-        actual_command = base_command.replace("request_", "")
+        command_to_run = ""
 
-        # Polecenie, które ma wykonać zadanie (w tym samozniszczenie zadania)
-        command_to_run = f"& '{self.winget_manager.winget_path}' {actual_command} --id '{payload}' --silent --accept-package-agreements; Remove-ScheduledTask -TaskName '{task_name}' -Confirm:$false"
+        if base_command in ['request_update', 'force_update']:
+            command_to_run = f"& '{self.winget_manager.winget_path}' update --id '{payload}' --silent --accept-package-agreements; Remove-ScheduledTask -TaskName '{task_name}' -Confirm:$false"
+        elif base_command in ['request_uninstall', 'force_uninstall']:
+            command_to_run = f"& '{self.winget_manager.winget_path}' uninstall --id '{payload}' --silent --force --accept-package-agreements; Remove-ScheduledTask -TaskName '{task_name}' -Confirm:$false"
+        elif base_command in ['request_os_update', 'force_os_update']:
+            command_to_run = f"{self._get_os_update_script()}; Remove-ScheduledTask -TaskName '{task_name}' -Confirm:$false"
+        else:
+            logging.error(f"Nieznana komenda do zaplanowania: {base_command}")
+            return
 
-        # Zleć utworzenie zadania Pomocnikowi UI
-        request_data = {"type": "schedule_task", "task_name": task_name, "command": command_to_run}
+        request_data = {"type": "schedule_task", "task_name": task_name, "command": command_to_run, "trigger_type": "onlogon"}
         response_json = UiClient.send_request(request_data)
 
         try:
             response = json.loads(response_json)
-            status = response.get('status')
-            details = response.get('details', '')
-            if status == 'success':
-                self.api_client.send_task_result(task_id, 'zaplanowane_na_zamkniecie', details)
+            if response.get('status') == 'success':
+                self.api_client.send_task_result(task_id, 'zaplanowane_na_logowanie', response.get('details', ''))
             else:
-                self.api_client.send_task_result(task_id, 'błąd', f"Nie udało się zaplanować zadania przez Pomocnika UI. Szczegóły: {details}")
-        except (json.JSONDecodeError, TypeError, AttributeError) as e:
-            logging.error(f"Błąd przetwarzania odpowiedzi od Pomocnika UI przy planowaniu zadania: {e}. Otrzymano: {response_json}")
-            self.api_client.send_task_result(task_id, 'błąd', f"Błąd wewnętrzny agenta podczas planowania zadania: {e}")
-        # --- KONIEC ZMIAN ---
+                self.api_client.send_task_result(task_id, 'błąd', f"Nie udało się zaplanować zadania: {response.get('details', '')}")
+        except (json.JSONDecodeError, TypeError) as e:
+            self.api_client.send_task_result(task_id, 'błąd', f"Błąd przetwarzania odpowiedzi od Pomocnika UI: {e}")
 
-    def _perform_winget_action(self, task_id, base_command, payload):
+    def _perform_action_now(self, task_id, base_command, payload):
         self.api_client.send_task_result(task_id, 'w_trakcie_wykonywania')
+        final_command = ""
+        action_type_for_msg = "aktualizacja"
 
-        action_type_for_msg = "deinstalacja" if "uninstall" in base_command else "aktualizacja"
-        actual_command = f'{action_type_for_msg.replace("acja", "")} --id "{payload}" --silent --force --accept-package-agreements'
+        if base_command == 'update':
+            action_type_for_msg = "aktualizacja aplikacji"
+            final_command = f'& "{self.winget_manager.winget_path}" update --id "{payload}" --silent --accept-package-agreements --accept-source-agreements --disable-interactivity'
+        elif base_command == 'uninstall':
+            action_type_for_msg = "deinstalacja aplikacji"
+            final_command = f'& "{self.winget_manager.winget_path}" uninstall --id "{payload}" --silent --force --accept-package-agreements --accept-source-agreements --disable-interactivity'
+        elif base_command == 'os_update':
+            action_type_for_msg = "aktualizacja systemu"
+            final_command = self._get_os_update_script()
+        else:
+            self.api_client.send_task_result(task_id, 'błąd', f"Agent nie rozpoznał polecenia: {base_command}")
+            return
 
-        full_winget_command = f'& "{self.winget_manager.winget_path}" {actual_command} --accept-source-agreements --disable-interactivity'
-        request_data = {"type": "execute_command", "command": full_winget_command}
-        response_json = UiClient.send_request(request_data)
-
+        response_json = UiClient.send_request({"type": "execute_command", "command": final_command})
         try:
             response = json.loads(response_json)
-            status = response.get('status')
-            details = response.get('details')
-
+            status, details = response.get('status'), response.get('details')
             if status == 'success':
                 self.api_client.send_task_result(task_id, 'zakończone', details)
             else:
-                self.api_client.send_task_result(task_id, 'niepowodzenie_interwencja_uzytkownika', details)
-                info_data = {
-                    "type": "info",
-                    "title": "Automatyzacja nie powiodła się",
-                    "message": f"Automatyczna {action_type_for_msg} aplikacji '{payload}' nie powiodła się. Prosimy o ręczne wykonanie tej operacji."
-                }
-                UiClient.send_request(info_data)
+                if details and "application is currently running" in details.lower():
+                    logging.info(f"Wykryto, że aplikacja '{payload}' jest uruchomiona. Automatycznie planuję zadanie na następne logowanie.")
+                    UiClient.send_request({"type": "info", "title": "Aktualizacja odroczona", "message": f"Aplikacja '{payload}' jest w użyciu. Aktualizacja została automatycznie zaplanowana na następne logowanie."})
+                    self.api_client.send_task_result(task_id, 'odroczone_aplikacja_uruchomiona', details)
+                    self._schedule_task_on_logon(task_id, base_command, payload)
+                else:
+                    self.api_client.send_task_result(task_id, 'niepowodzenie_interwencja_uzytkownika', details)
+                    UiClient.send_request({"type": "info", "title": "Automatyzacja nie powiodła się", "message": f"Automatyczna {action_type_for_msg} '{payload}' nie powiodła się. Prosimy o ręczne wykonanie tej operacji."})
         except (json.JSONDecodeError, TypeError, AttributeError) as e:
-            logging.error(f"Błąd przetwarzania odpowiedzi od Pomocnika UI: {e}. Otrzymano: {response_json}")
-            final_details = f"Błąd wewnętrzny agenta podczas komunikacji z UI Helperem: {e}\nOtrzymana odpowiedź: {response_json}"
-            self.api_client.send_task_result(task_id, 'błąd', final_details)
+            self.api_client.send_task_result(task_id, 'błąd', f"Błąd wewnętrzny agenta: {e}")
 
     def _handle_interactive_task(self, task):
         task_id, command, payload = task['id'], task['command'], task['payload']
         try:
             self.api_client.send_task_result(task_id, 'oczekuje_na_uzytkownika')
-            action_type = "deinstalacji" if "uninstall" in command else "aktualizacji"
-            request_data = {"type": "request", "title": f"Prośba o {action_type}", "message": f"Dział IT prosi o {action_type} aplikacji '{payload}'.", "detail": "Wybierz 'Tak', aby uruchomić teraz, lub 'Nie', aby zaplanować na zamknięcie systemu."}
+            if command == 'request_os_update':
+                action_type, app_name = "aktualizacji systemu Windows", "wszystkich dostępnych aktualizacji"
+            else:
+                action_type = "deinstalacji" if "uninstall" in command else "aktualizacji"
+                app_name = f"aplikacji '{payload}'"
 
+            request_data = {"type": "request", "title": f"Prośba o {action_type}", "message": f"Dział IT prosi o {action_type} {app_name}.", "detail": "Wybierz 'Tak', aby uruchomić teraz, lub 'Nie', aby zaplanować na następne logowanie."}
             response_json = UiClient.send_request(request_data)
             response_data = json.loads(response_json)
             user_choice = response_data.get('response')
 
-            if user_choice == "now": self._perform_winget_action(task_id, command, payload)
-            elif user_choice == "shutdown": self._schedule_task_on_shutdown(task_id, command, payload)
-            else: self.api_client.send_task_result(task_id, 'błąd', 'Brak odpowiedzi od użytkownika lub błąd pomocnika UI.')
+            if user_choice == "now":
+                action_command = command.replace('request_', '')
+                self._perform_action_now(task_id, action_command, payload)
+            elif user_choice == "shutdown":
+                self._schedule_task_on_logon(task_id, command, payload)
+            else:
+                self.api_client.send_task_result(task_id, 'anulowane', 'Użytkownik anulował lub zamknął okno dialogowe.')
         except Exception as e:
-            logging.error(f"Krytyczny błąd w obsłudze zadania interaktywnego {task_id}: {e}", exc_info=True)
             self.api_client.send_task_result(task_id, 'błąd', f"Błąd wewnętrzny agenta: {e}")
 
     def _handle_self_update(self, task, service_framework):
@@ -292,26 +335,17 @@ class Agent:
         try:
             tasks = self.api_client.get_tasks(self.hostname)
             if not tasks: return
-
             for task in tasks:
-                command = task['command']
-                task_id = task['id']
-                payload = task['payload']
+                command, task_id, payload = task['command'], task['id'], task['payload']
                 logging.info(f"Otrzymano zadanie ID {task_id}: {command}")
 
-                if command == 'self_update':
-                    self._handle_self_update(task, service_framework); break
-                elif command == 'force_report':
-                    self.api_client.send_task_result(task_id, 'w toku')
-                    self.run_full_report()
-                    self.api_client.send_task_result(task_id, 'zakończone')
-                elif command.startswith('request_'):
+                if command.startswith('request_'):
                     threading.Thread(target=self._handle_interactive_task, args=(task,), daemon=True).start()
-                    logging.info(f"Uruchomiono wątek dla zadania interaktywnego ID {task_id}.")
-                elif command in ['update_package', 'uninstall_package']:
-                    threading.Thread(target=self._perform_winget_action, args=(task_id, command, payload), daemon=True).start()
-                    logging.info(f"Uruchomiono wątek dla zadania wymuszonego ID {task_id}.")
-
+                elif command.startswith('force_'):
+                    action_command = command.replace('force_', '')
+                    threading.Thread(target=self._perform_action_now, args=(task_id, action_command, payload), daemon=True).start()
+                elif command == 'self_update':
+                    self._handle_self_update(task, service_framework); break
         except Exception as e: logging.error(f"Błąd podczas przetwarzania zadań: {e}", exc_info=True)
 
 class AgentService(win32serviceutil.ServiceFramework):

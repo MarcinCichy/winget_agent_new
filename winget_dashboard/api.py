@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, abort, current_app, url_for, send
 from functools import wraps
 from .db import DatabaseManager
 import os
+import json
 
 bp = Blueprint('api', __name__, url_prefix='/api')
 
@@ -9,7 +10,8 @@ bp = Blueprint('api', __name__, url_prefix='/api')
 def require_api_key(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if request.headers.get('X-API-Key') and request.headers.get('X-API-Key') == current_app.config['API_KEY']:
+        api_key = request.headers.get('X-API-Key') or request.args.get('apiKey')
+        if api_key and api_key == current_app.config['API_KEY']:
             return f(*args, **kwargs)
         abort(401)
 
@@ -28,7 +30,7 @@ def receive_report():
         apps_still_needing_update = {
             update['id'] for update in data.get('available_app_updates', [])
         }
-        active_update_tasks = db_manager.get_active_tasks_for_computer(computer_id, command_filter='update_package')
+        active_update_tasks = db_manager.get_active_tasks_for_computer(computer_id, command_filter_prefix='update')
         tasks_to_remove = []
         for task in active_update_tasks:
             if task['payload'] not in apps_still_needing_update:
@@ -88,7 +90,7 @@ def request_update(computer_id):
     data = request.get_json()
     package_id = data.get('package_id')
     force = data.get('force', False)
-    command = 'update_package' if force else 'request_update'
+    command = 'force_update' if force else 'request_update'
     db_manager = DatabaseManager()
     task_id = db_manager.create_task(
         computer_id=computer_id,
@@ -103,12 +105,26 @@ def request_uninstall(computer_id):
     data = request.get_json()
     package_id = data.get('package_id')
     force = data.get('force', False)
-    command = 'uninstall_package' if force else 'request_uninstall'
+    command = 'force_uninstall' if force else 'request_uninstall'
     db_manager = DatabaseManager()
     task_id = db_manager.create_task(
         computer_id=computer_id,
         command=command,
         payload=package_id
+    )
+    return jsonify({"status": "success", "message": f"Zadanie ({command}) zlecone", "task_id": task_id})
+
+
+@bp.route('/computer/<int:computer_id>/update_os', methods=['POST'])
+def request_os_update(computer_id):
+    data = request.get_json()
+    force = data.get('force', False)
+    command = 'force_os_update' if force else 'request_os_update'
+    db_manager = DatabaseManager()
+    task_id = db_manager.create_task(
+        computer_id=computer_id,
+        command=command,
+        payload='os_update'
     )
     return jsonify({"status": "success", "message": f"Zadanie ({command}) zlecone", "task_id": task_id})
 
@@ -135,10 +151,7 @@ def task_status(task_id):
     if task:
         return jsonify(dict(task))
     else:
-        active_task = db_manager.get_task_status(task_id)
-        if active_task:
-            return jsonify({"status": active_task})
-        return jsonify({"status": "zakończone"}), 200
+        return jsonify({"status": "not_found"}), 404
 
 
 @bp.route('/agent/download/latest', methods=['GET'])
@@ -178,7 +191,7 @@ def agent_update_status():
     computer_details = db_manager.get_computer_details(hostname)
     if computer_details:
         active_tasks = db_manager.get_active_tasks_for_computer(computer_details['computer']['id'],
-                                                                command_filter='self_update')
+                                                                command_filter_prefix='self_update')
         if active_tasks:
             task_ids_to_remove = [task['id'] for task in active_tasks]
             db_manager.delete_tasks(task_ids_to_remove)
@@ -193,7 +206,6 @@ def deploy_update_to_all():
     computers = db_manager.get_all_computers()
 
     if not computers:
-        # Zmieniamy odpowiedź na bardziej czytelną dla JS
         return jsonify({"status": "warning", "message": "Brak komputerów w bazie danych do aktualizacji."}), 200
 
     base_url = request.host_url.strip('/')
@@ -211,5 +223,4 @@ def deploy_update_to_all():
 
     message = f"Pomyślnie zlecono zadanie aktualizacji dla {tasks_created_count} komputerów."
     current_app.logger.info(message)
-    # Zwracamy sukces i liczbę zleconych zadań
     return jsonify({"status": "success", "message": message, "count": tasks_created_count})

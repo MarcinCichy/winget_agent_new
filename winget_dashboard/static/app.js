@@ -38,11 +38,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
             fetch(`/api/task_status/${taskId}`)
                 .then(response => {
-                    if (!response.ok) throw new Error('Błąd serwera przy sprawdzaniu statusu.');
+                    if (!response.ok) {
+                        if (response.status === 404) return { status: 'zakończone' };
+                        throw new Error('Błąd serwera przy sprawdzaniu statusu.');
+                    }
                     return response.json();
                 })
                 .then(data => {
-                    const finalStatuses = ['zakończone', 'błąd', 'niepowodzenie_interwencja_uzytkownika', 'not_found'];
+                    const finalStatuses = ['zakończone', 'błąd', 'niepowodzenie_interwencja_uzytkownika', 'not_found', 'odroczone_aplikacja_uruchomiona'];
                     if (finalStatuses.includes(data.status)) {
                         clearInterval(interval);
                         if (onComplete) onComplete(data.status);
@@ -70,25 +73,34 @@ document.addEventListener('DOMContentLoaded', () => {
     function handleActionButtonClick(e) {
         e.preventDefault();
         const target = e.target.closest('[data-action]');
+        if (!target) return;
 
-        const action = target.dataset.action || 'request';
+        const action = target.dataset.action;
         const computerId = target.dataset.computerId;
         const packageId = target.dataset.packageId;
-        const force = action === 'force';
+        const force = action.startsWith('force_');
 
-        const actionGroup = target.closest('.action-group');
-        const isUninstall = actionGroup.querySelector('.uninstall-btn') !== null;
+        let apiUrl = '';
+        let confirmMsg = '';
 
-        const appName = target.closest('tr').cells[isUninstall ? 0 : 1].textContent.trim();
-        const actionType = isUninstall ? 'deinstalacji' : 'aktualizacji';
-        const forceText = force ? 'WYMUSIĆ' : 'poprosić o';
+        if (action.includes('uninstall')) {
+            const appName = target.closest('tr').cells[0].textContent.trim();
+            apiUrl = `/api/computer/${computerId}/uninstall`;
+            confirmMsg = `Czy na pewno chcesz ${force ? 'WYMUSIĆ deinstalację' : 'poprosić o deinstalację'} aplikacji "${appName}"?`;
+        } else if (action.includes('update_os')) {
+            apiUrl = `/api/computer/${computerId}/update_os`;
+            confirmMsg = `Czy na pewno chcesz ${force ? 'WYMUSIĆ aktualizację' : 'poprosić o aktualizację'} systemu Windows? Może to wymagać restartu komputera.`;
+        } else { // Domyślnie aktualizacja aplikacji
+            const appName = target.closest('tr').cells[1].textContent.trim();
+            apiUrl = `/api/computer/${computerId}/update`;
+            confirmMsg = `Czy na pewno chcesz ${force ? 'WYMUSIĆ aktualizację' : 'poprosić o aktualizację'} aplikacji "${appName}"?`;
+        }
 
-        if (!confirm(`Czy na pewno chcesz ${forceText} ${actionType} aplikacji "${appName}"?`)) {
+        if (!confirm(confirmMsg)) {
             return;
         }
 
-        const apiUrl = isUninstall ? `/api/computer/${computerId}/uninstall` : `/api/computer/${computerId}/update`;
-
+        const actionGroup = target.closest('.action-group');
         const buttonToDisable = actionGroup.querySelector('.main-action');
         buttonToDisable.textContent = 'Zlecanie...';
         buttonToDisable.disabled = true;
@@ -100,13 +112,13 @@ document.addEventListener('DOMContentLoaded', () => {
         })
         .then(response => response.json())
         .then(data => {
-            if (data.status !== 'success') throw new Error('Nie udało się zlecić zadania.');
+            if (data.status !== 'success') throw new Error(data.message || 'Nie udało się zlecić zadania.');
             forceReload();
         })
         .catch(error => {
             console.error("Błąd sieci:", error);
             alert("Wystąpił błąd: " + error.message);
-            buttonToDisable.textContent = isUninstall ? 'Odinstaluj' : 'Aktualizuj';
+            buttonToDisable.textContent = action.includes('uninstall') ? 'Odinstaluj' : 'Poproś';
             buttonToDisable.disabled = false;
         });
     }
@@ -114,6 +126,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('.action-group').forEach(group => {
         const toggleBtn = group.querySelector('.dropdown-toggle');
         const menu = group.querySelector('.dropdown-menu');
+
+        if (!toggleBtn || !menu) return;
 
         toggleBtn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -154,6 +168,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (data && data.result_details) {
                             errorContent.textContent = data.result_details;
                             modal.style.display = 'block';
+                        } else if (data.status) {
+                            errorContent.textContent = `Brak szczegółów. Status zadania: ${data.status}`;
+                            modal.style.display = 'block';
                         } else {
                             alert('Brak szczegółów błędu dla tego zadania.');
                         }
@@ -169,7 +186,6 @@ document.addEventListener('DOMContentLoaded', () => {
         };
     }
 
-    // --- LOGIKA DLA POJEDYNCZEGO PRZYCISKU ODŚWIEŻ ---
     document.querySelectorAll('.refresh-btn[data-computer-id]').forEach(button => {
         button.addEventListener('click', function() {
             const computerId = this.dataset.computerId;
@@ -222,7 +238,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // --- NOWA, OSOBNA LOGIKA DLA "ODŚWIEŻ WSZYSTKIE" ---
     const refreshAllBtn = document.getElementById('refresh-all-btn');
     if(refreshAllBtn) {
         refreshAllBtn.addEventListener('click', function() {
@@ -234,7 +249,6 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
     }
-
 
     const blacklistForm = document.getElementById('blacklist-form');
     if (blacklistForm) {
@@ -292,13 +306,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const originalText = button.textContent;
             button.textContent = 'Generowanie...';
             button.disabled = true;
-
             const formData = new FormData(this);
-
-            fetch(this.action, {
-                method: 'POST',
-                body: formData
-            })
+            fetch(this.action, { method: 'POST', body: formData })
             .then(response => {
                 if (!response.ok) {
                     return response.text().then(text => { throw new Error(text || 'Błąd serwera podczas generowania pliku.')});
@@ -359,17 +368,13 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!confirm('Czy na pewno chcesz zlecić aktualizację agenta na WSZYSTKICH komputerach? Ta akcja jest nieodwracalna.')) {
                 return;
             }
-
             const originalText = this.textContent;
             this.textContent = 'Wdrażanie...';
             this.disabled = true;
-
             fetch('/api/agent/deploy_update', { method: 'POST' })
                 .then(response => response.json().then(data => ({ok: response.ok, data})))
                 .then(({ok, data}) => {
-                    if (!ok) {
-                        throw new Error(data.message || 'Błąd serwera');
-                    }
+                    if (!ok) throw new Error(data.message || 'Błąd serwera');
                     alert(data.message);
                 })
                 .catch(error => {
@@ -379,6 +384,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 .finally(() => {
                     this.textContent = 'Wdróż aktualizację na wszystkich komputerach';
                     this.disabled = false;
+                    forceReload();
                 });
         });
     }

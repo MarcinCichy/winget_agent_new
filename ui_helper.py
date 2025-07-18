@@ -1,13 +1,14 @@
-# Plik: ui_helper.py (finalna wersja z schtasks.exe dla maksymalnej kompatybilności)
+# Plik: ui_helper.py (WERSJA FINAŁOWA z ctypes)
+
 import socket
 import json
 import threading
-from tkinter import messagebox, Tk
 import logging
 import os
 import subprocess
 import struct
-import tempfile  # <-- NOWY IMPORT
+import tempfile
+import ctypes  # ZMIANA: Nowy import
 
 # Konfiguracja logowania
 LOG_DIR = os.path.join(os.environ.get('ProgramData'), "WingetAgent")
@@ -19,26 +20,38 @@ HOST = '127.0.0.1'
 PORT = 61900
 
 
-def show_dialog(data):
+# ## ZMIANA: Nowa funkcja do wyświetlania okienek za pomocą Windows API (ctypes) ##
+def show_dialog_native(data):
+    """Wyświetla natywne okno dialogowe Windows, które jest bezpieczne wątkowo."""
     try:
-        root = Tk()
-        root.withdraw()
         dialog_type = data.get('type', 'info')
         title = data.get('title', 'Winget Dashboard')
         message = data.get('message', '')
         response_str = "error"
+
+        # Definicje stałych dla Windows MessageBox API
+        MB_OK = 0x00000000
+        MB_YESNO = 0x00000004
+        MB_ICONINFORMATION = 0x00000040
+        MB_ICONQUESTION = 0x00000020
+        IDYES = 6
+
         if dialog_type == 'request':
-            detail_text = data.get('detail',
-                                   "Wybierz 'Tak', aby uruchomić teraz, lub 'Nie', aby zaplanować na zamknięcie systemu.")
-            user_response = messagebox.askyesno(title, message, icon='question', detail=detail_text)
-            response_str = "now" if user_response else "shutdown"
-        else:
-            messagebox.showinfo(title, message, icon='info')
+            # Używamy natywnego okna Pytania (Tak/Nie)
+            style = MB_YESNO | MB_ICONQUESTION
+            # Łączymy główną wiadomość z detalem dla lepszej czytelności
+            full_message = f"{message}\n\n{data.get('detail', '')}"
+            result = ctypes.windll.user32.MessageBoxW(0, full_message, title, style)
+            response_str = "now" if result == IDYES else "shutdown"
+        else:  # dla 'info'
+            # Używamy natywnego okna Informacji
+            style = MB_OK | MB_ICONINFORMATION
+            ctypes.windll.user32.MessageBoxW(0, message, title, style)
             response_str = "ok"
-        root.destroy()
+
         return json.dumps({"status": "dialog_ok", "response": response_str})
     except Exception as e:
-        logging.error(f"Błąd w show_dialog: {e}", exc_info=True)
+        logging.error(f"Błąd w show_dialog_native: {e}", exc_info=True)
         return json.dumps({"status": "error", "details": str(e)})
 
 
@@ -52,10 +65,8 @@ def run_command_as_user(command_str):
             creationflags=subprocess.CREATE_NO_WINDOW,
             timeout=1800
         )
-
         clean_stdout = result.stdout.replace('\\', '/')
         clean_stderr = result.stderr.replace('\\', '/')
-
         if result.returncode == 0 or "Successfully installed" in clean_stdout or "successfully installed" in clean_stderr:
             logging.info(f"Polecenie zakończone sukcesem. Kod wyjścia: {result.returncode}")
             return json.dumps({"status": "success", "details": clean_stdout})
@@ -64,69 +75,54 @@ def run_command_as_user(command_str):
                 f"Polecenie nie powiodło się. Kod: {result.returncode}\nSTDOUT: {clean_stdout}\nSTDERR: {clean_stderr}")
             error_details = f"Kod wyjścia: {result.returncode}\n\nSTDOUT:\n{clean_stdout}\n\nSTDERR:\n{clean_stderr}"
             return json.dumps({"status": "failure", "details": error_details})
-
     except Exception as e:
         logging.error(f"Krytyczny błąd wykonania polecenia przez UI Helpera: {e}", exc_info=True)
         return json.dumps({"status": "failure", "details": str(e)})
 
 
-# --- NOWA, OSTATECZNA WERSJA FUNKCJI ---
-def schedule_task_as_user(task_name, command_to_run):
-    """Planuje zadanie przy użyciu schtasks.exe dla maksymalnej kompatybilności."""
-    logging.info(f"Otrzymano prośbę o zaplanowanie zadania '{task_name}' przy użyciu schtasks.exe")
-
-    # Tworzenie ścieżki do tymczasowego pliku skryptu
+def schedule_task_as_user(task_name, command_to_run, trigger_type='onlogon'):
+    logging.info(f"Otrzymano prośbę o zaplanowanie zadania '{task_name}' z wyzwalaczem '{trigger_type}'")
     temp_dir = tempfile.gettempdir()
     script_path = os.path.join(temp_dir, f"{task_name}.ps1")
-
-    # Kompletne polecenie, które znajdzie się w pliku .ps1 (wraz z usunięciem tego pliku)
+    log_file_path = os.path.join(temp_dir, f"{task_name}.log")
     script_content = f"""
+Start-Transcript -Path "{log_file_path}" -Force
+Write-Host "Zadanie '{task_name}' uruchomione o $(Get-Date) z wyzwalaczem '{trigger_type}'"
 {command_to_run}
+Write-Host "Zadanie '{task_name}' zakończone o $(Get-Date)"
+Stop-Transcript
 Remove-Item -Path "{script_path}" -Force -ErrorAction SilentlyContinue
 """
     try:
-        # Zapisz polecenie do pliku tymczasowego
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(script_content)
 
-        # Polecenie, które zostanie wykonane przez schtasks
         task_command = f'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{script_path}"'
+        base_schtasks_command = ['schtasks', '/Create', '/TN', task_name, '/TR', task_command, '/RL', 'HIGHEST', '/F']
 
-        # Stworzenie zadania za pomocą schtasks.exe
-        # /SC ONEVENT - wyzwalacz na zdarzenie
-        # /EC Security - w dzienniku Zabezpieczeń
-        # /MO "*[System[EventID=4647]]" - dla zdarzenia wylogowania
-        # /F - wymuś utworzenie (nadpisz, jeśli istnieje)
-        schtasks_command = [
-            'schtasks', '/Create',
-            '/TN', task_name,
-            '/TR', task_command,
-            '/SC', 'ONEVENT',
-            '/EC', 'Security',
-            '/MO', "*[System[EventID=4647]]",
-            '/F'
-        ]
+        if trigger_type == 'onlogon':
+            final_schtasks_command = base_schtasks_command + ['/SC', 'ONLOGON']
+        else:
+            logging.warning(f"Nieznany typ wyzwalacza '{trigger_type}', używam domyślnego ONLOGON.")
+            final_schtasks_command = base_schtasks_command + ['/SC', 'ONLOGON']
 
         result = subprocess.run(
-            schtasks_command,
+            final_schtasks_command,
             capture_output=True, text=True, encoding='cp852', errors='ignore',
             creationflags=subprocess.CREATE_NO_WINDOW
         )
-
         if result.returncode == 0:
-            logging.info(f"Pomyślnie zaplanowano zadanie '{task_name}' za pomocą schtasks.exe.")
+            logging.info(f"Pomyślnie zaplanowano zadanie '{task_name}'.")
             return json.dumps({"status": "success", "details": f"Zadanie '{task_name}' zostało poprawnie zaplanowane."})
         else:
+            error_msg = result.stdout or result.stderr
             logging.error(
-                f"Nie udało się zaplanować zadania '{task_name}'. Kod: {result.returncode}\nBłąd: {result.stdout or result.stderr}")
-            return json.dumps({"status": "failure", "details": result.stdout or result.stderr})
-
+                f"Nie udało się zaplanować zadania '{task_name}'. Kod: {result.returncode}\nBłąd: {error_msg}")
+            return json.dumps({"status": "failure", "details": error_msg})
     except Exception as e:
         logging.error(f"Krytyczny błąd podczas planowania zadania: {e}", exc_info=True)
         return json.dumps({"status": "failure", "details": str(e)})
 
-
-# --- KONIEC NOWEJ WERSJI FUNKCJI ---
 
 def handle_client(conn, addr):
     logging.info(f"Połączono z {addr} - obsługa w wątku {threading.get_ident()}")
@@ -135,25 +131,27 @@ def handle_client(conn, addr):
         header_bytes = conn.recv(4)
         if not header_bytes: return
         msg_len = struct.unpack('>I', header_bytes)[0]
-
-        chunks = []
-        bytes_recd = 0
+        chunks, bytes_recd = [], 0
         while bytes_recd < msg_len:
             chunk = conn.recv(min(msg_len - bytes_recd, 4096))
             if not chunk: raise RuntimeError("Połączenie przerwane")
             chunks.append(chunk)
             bytes_recd += len(chunk)
-
         data = json.loads(b''.join(chunks).decode('utf-8'))
         logging.info(f"Otrzymano polecenie: {data}")
         dialog_type = data.get('type')
 
+        # ## ZMIANA: Wywołujemy nową, bezpieczną wątkowo funkcję ##
         if dialog_type in ['request', 'info']:
-            response_json = show_dialog(data)
+            response_json = show_dialog_native(data)
         elif dialog_type == 'execute_command':
             response_json = run_command_as_user(data.get('command'))
         elif dialog_type == 'schedule_task':
-            response_json = schedule_task_as_user(data.get('task_name'), data.get('command'))
+            response_json = schedule_task_as_user(
+                data.get('task_name'),
+                data.get('command'),
+                data.get('trigger_type', 'onlogon')
+            )
         else:
             response_json = json.dumps({"status": "error", "details": f"Nieznany typ polecenia: {dialog_type}"})
 

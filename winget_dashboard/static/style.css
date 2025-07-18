@@ -9,6 +9,9 @@
     --kolor-cienia: rgba(0,0,0,0.075);
     --kolor-tla-hover: #f1f1f1;
     --kolor-tla-input: #fff;
+    --kolor-sukcesu: #28a745;
+    --kolor-bledu: #dc3545;
+    --kolor-tekstu-przycisku: #fff;
 }
 
 /* Definicja tych samych zmiennych, ale z wartościami dla motywu ciemnego */
@@ -22,6 +25,9 @@ html.dark-mode {
     --kolor-cienia: rgba(255,255,255,0.075);
     --kolor-tla-hover: #2a2a2a;
     --kolor-tla-input: #2c2c2c;
+    --kolor-sukcesu: #28a745;
+    --kolor-bledu: #e53935;
+    --kolor-tekstu-przycisku: #fff;
 }
 
 /* === OGÓLNE STYLE === */
@@ -120,7 +126,7 @@ tbody tr:hover { background-color: var(--kolor-tla-hover); }
 .action-btn {
     display: inline-block; padding: 8px 14px; font-size: 14px; font-weight: 400; text-align: center;
     white-space: nowrap; vertical-align: middle; cursor: pointer; border: 1px solid transparent;
-    border-radius: 4px; color: #fff; text-decoration: none;
+    border-radius: 4px; color: var(--kolor-tekstu-przycisku); text-decoration: none;
 }
 .action-btn:hover { text-decoration: none; opacity: 0.9; }
 .action-btn:disabled { cursor: not-allowed; opacity: 0.65; }
@@ -152,6 +158,22 @@ tbody tr:hover { background-color: var(--kolor-tla-hover); }
     position: relative;
     z-index: 1;
 }
+
+/* ### ZMIANA: DODANE STYLE DLA WIADOMOŚCI FLASH ### */
+.flash-message {
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border-radius: 5px;
+    color: var(--kolor-tekstu-przycisku);
+    font-weight: bold;
+}
+.flash-message.success {
+    background-color: var(--kolor-sukcesu);
+}
+.flash-message.error {
+    background-color: var(--kolor-bledu);
+}
+/* ### KONIEC ZMIAN ### */
 
 /* Pozostałe style */
 .icon-btn { background: none; border: none; cursor: pointer; padding: 5px; vertical-align: middle; line-height: 0; }
