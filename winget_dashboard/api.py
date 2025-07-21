@@ -30,7 +30,7 @@ def receive_report():
         apps_still_needing_update = {
             update['id'] for update in data.get('available_app_updates', [])
         }
-        active_update_tasks = db_manager.get_active_tasks_for_computer(computer_id, command_filter_prefix='update')
+        active_update_tasks = db_manager.get_active_tasks_for_computer(computer_id, command_filter='update')
         tasks_to_remove = []
         for task in active_update_tasks:
             if task['payload'] not in apps_still_needing_update:
@@ -191,7 +191,7 @@ def agent_update_status():
     computer_details = db_manager.get_computer_details(hostname)
     if computer_details:
         active_tasks = db_manager.get_active_tasks_for_computer(computer_details['computer']['id'],
-                                                                command_filter_prefix='self_update')
+                                                                command_filter='self_update')
         if active_tasks:
             task_ids_to_remove = [task['id'] for task in active_tasks]
             db_manager.delete_tasks(task_ids_to_remove)

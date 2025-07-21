@@ -1,4 +1,4 @@
-# Plik: ui_helper.py (WERSJA FINAŁOWA z ctypes)
+# Plik: ui_helper.py (WERSJA FINAŁOWA z ctypes i Base64)
 
 import socket
 import json
@@ -8,7 +8,8 @@ import os
 import subprocess
 import struct
 import tempfile
-import ctypes  # ZMIANA: Nowy import
+import ctypes
+import base64  # <-- DODANY IMPORT
 
 # Konfiguracja logowania
 LOG_DIR = os.path.join(os.environ.get('ProgramData'), "WingetAgent")
@@ -20,7 +21,6 @@ HOST = '127.0.0.1'
 PORT = 61900
 
 
-# ## ZMIANA: Nowa funkcja do wyświetlania okienek za pomocą Windows API (ctypes) ##
 def show_dialog_native(data):
     """Wyświetla natywne okno dialogowe Windows, które jest bezpieczne wątkowo."""
     try:
@@ -37,14 +37,11 @@ def show_dialog_native(data):
         IDYES = 6
 
         if dialog_type == 'request':
-            # Używamy natywnego okna Pytania (Tak/Nie)
             style = MB_YESNO | MB_ICONQUESTION
-            # Łączymy główną wiadomość z detalem dla lepszej czytelności
             full_message = f"{message}\n\n{data.get('detail', '')}"
             result = ctypes.windll.user32.MessageBoxW(0, full_message, title, style)
             response_str = "now" if result == IDYES else "shutdown"
         else:  # dla 'info'
-            # Używamy natywnego okna Informacji
             style = MB_OK | MB_ICONINFORMATION
             ctypes.windll.user32.MessageBoxW(0, message, title, style)
             response_str = "ok"
@@ -85,6 +82,8 @@ def schedule_task_as_user(task_name, command_to_run, trigger_type='onlogon'):
     temp_dir = tempfile.gettempdir()
     script_path = os.path.join(temp_dir, f"{task_name}.ps1")
     log_file_path = os.path.join(temp_dir, f"{task_name}.log")
+
+    # --- ZMIANA: Usunięto polecenia debugowania takie jak pause ---
     script_content = f"""
 Start-Transcript -Path "{log_file_path}" -Force
 Write-Host "Zadanie '{task_name}' uruchomione o $(Get-Date) z wyzwalaczem '{trigger_type}'"
@@ -94,17 +93,25 @@ Stop-Transcript
 Remove-Item -Path "{script_path}" -Force -ErrorAction SilentlyContinue
 """
     try:
+        # Ten plik jest tworzony tylko po to, by jego zawartość mogła być zakodowana.
+        # Teoretycznie nie jest potrzebny, ale zostawiamy go dla spójności.
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(script_content)
 
-        task_command = f'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{script_path}"'
-        base_schtasks_command = ['schtasks', '/Create', '/TN', task_name, '/TR', task_command, '/RL', 'HIGHEST', '/F']
+        # --- ZMIANA: Zmieniamy sposób uruchamiania skryptu na -EncodedCommand ---
+        # Kodujemy całą zawartość skryptu do Base64, aby uniknąć problemów ze znakami specjalnymi i kontekstem wykonania
+        encoded_command = base64.b64encode(script_content.encode('utf-16-le')).decode('ascii')
+        task_command = f'powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded_command}'
+
+        # Budujemy polecenie schtasks bez /RL HIGHEST
+        base_schtasks_command = ['schtasks', '/Create', '/TN', task_name, '/TR', task_command, '/F']
 
         if trigger_type == 'onlogon':
-            final_schtasks_command = base_schtasks_command + ['/SC', 'ONLOGON']
+            # Dodajemy opóźnienie, aby dać systemowi czas na załadowanie środowiska
+            final_schtasks_command = base_schtasks_command + ['/SC', 'ONLOGON', '/DELAY', '0001:00']
         else:
             logging.warning(f"Nieznany typ wyzwalacza '{trigger_type}', używam domyślnego ONLOGON.")
-            final_schtasks_command = base_schtasks_command + ['/SC', 'ONLOGON']
+            final_schtasks_command = base_schtasks_command + ['/SC', 'ONLOGON', '/DELAY', '0001:00']
 
         result = subprocess.run(
             final_schtasks_command,
@@ -141,7 +148,6 @@ def handle_client(conn, addr):
         logging.info(f"Otrzymano polecenie: {data}")
         dialog_type = data.get('type')
 
-        # ## ZMIANA: Wywołujemy nową, bezpieczną wątkowo funkcję ##
         if dialog_type in ['request', 'info']:
             response_json = show_dialog_native(data)
         elif dialog_type == 'execute_command':
