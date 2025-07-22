@@ -249,8 +249,9 @@ class DatabaseManager:
         logging.info(f"Usunięto zadania o ID: {task_ids}")
 
     def get_computer_tasks(self, computer_id):
-        final_statuses = ('zakończone', 'błąd', 'niepowodzenie_interwencja_uzytkownika')
-        placeholders = ','.join('?' for _ in final_statuses)
+        # Pokazujemy wszystkie statusy oprócz "zakończone", aby widzieć błędy i zadania w toku.
+        final_statuses = ('zakończone',)  # <-- Poprawka: ukrywamy tylko to co się w pełni udało
+        placeholders = '?'
         query = f"SELECT id, payload, status, command FROM tasks WHERE computer_id = ? AND status NOT IN ({placeholders})"
         tasks = self._execute(query, (computer_id,) + final_statuses).fetchall()
         task_map = {}
