@@ -1,4 +1,4 @@
-# Plik: ui_helper.py (WERSJA FINAŁOWA z ctypes i Base64)
+# Plik: ui_helper.py (WERSJA FINAŁOWA z podejściem hybrydowym)
 
 import socket
 import json
@@ -9,7 +9,7 @@ import subprocess
 import struct
 import tempfile
 import ctypes
-import base64  # <-- DODANY IMPORT
+import base64
 
 # Konfiguracja logowania
 LOG_DIR = os.path.join(os.environ.get('ProgramData'), "WingetAgent")
@@ -29,7 +29,6 @@ def show_dialog_native(data):
         message = data.get('message', '')
         response_str = "error"
 
-        # Definicje stałych dla Windows MessageBox API
         MB_OK = 0x00000000
         MB_YESNO = 0x00000004
         MB_ICONINFORMATION = 0x00000040
@@ -41,7 +40,7 @@ def show_dialog_native(data):
             full_message = f"{message}\n\n{data.get('detail', '')}"
             result = ctypes.windll.user32.MessageBoxW(0, full_message, title, style)
             response_str = "now" if result == IDYES else "shutdown"
-        else:  # dla 'info'
+        else:
             style = MB_OK | MB_ICONINFORMATION
             ctypes.windll.user32.MessageBoxW(0, message, title, style)
             response_str = "ok"
@@ -80,37 +79,35 @@ def run_command_as_user(command_str):
 def schedule_task_as_user(task_name, command_to_run, trigger_type='onlogon'):
     logging.info(f"Otrzymano prośbę o zaplanowanie zadania '{task_name}' z wyzwalaczem '{trigger_type}'")
     temp_dir = tempfile.gettempdir()
-    script_path = os.path.join(temp_dir, f"{task_name}.ps1")
+    starter_script_path = os.path.join(temp_dir, f"{task_name}.ps1")
     log_file_path = os.path.join(temp_dir, f"{task_name}.log")
 
-    # --- ZMIANA: Usunięto polecenia debugowania takie jak pause ---
-    script_content = f"""
+    # Krok 1: Definiujemy treść naszego GŁÓWNEGO skryptu (z logowaniem, poleceniem winget itd.)
+    main_script_content = f"""
 Start-Transcript -Path "{log_file_path}" -Force
-Write-Host "Zadanie '{task_name}' uruchomione o $(Get-Date) z wyzwalaczem '{trigger_type}'"
 {command_to_run}
-Write-Host "Zadanie '{task_name}' zakończone o $(Get-Date)"
 Stop-Transcript
-Remove-Item -Path "{script_path}" -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "{starter_script_path}" -Force -ErrorAction SilentlyContinue
 """
     try:
-        # Ten plik jest tworzony tylko po to, by jego zawartość mogła być zakodowana.
-        # Teoretycznie nie jest potrzebny, ale zostawiamy go dla spójności.
-        with open(script_path, "w", encoding="utf-8") as f:
-            f.write(script_content)
+        # Krok 2: Kodujemy treść głównego skryptu do Base64
+        encoded_command = base64.b64encode(main_script_content.encode('utf-16-le')).decode('ascii')
 
-        # --- ZMIANA: Zmieniamy sposób uruchamiania skryptu na -EncodedCommand ---
-        # Kodujemy całą zawartość skryptu do Base64, aby uniknąć problemów ze znakami specjalnymi i kontekstem wykonania
-        encoded_command = base64.b64encode(script_content.encode('utf-16-le')).decode('ascii')
-        task_command = f'powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded_command}'
+        # Krok 3: Tworzymy treść dla SKRYPTU-STARTERA, który jest bardzo prosty
+        starter_script_content = f"powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded_command}"
 
-        # Budujemy polecenie schtasks bez /RL HIGHEST
+        # Krok 4: Zapisujemy na dysku tylko skrypt-starter
+        with open(starter_script_path, "w", encoding="utf-8") as f:
+            f.write(starter_script_content)
+
+        # Krok 5: Polecenie dla Harmonogramu Zadań jest teraz bardzo krótkie i bezpieczne
+        task_command = f'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{starter_script_path}"'
+
         base_schtasks_command = ['schtasks', '/Create', '/TN', task_name, '/TR', task_command, '/F']
 
         if trigger_type == 'onlogon':
-            # Dodajemy opóźnienie, aby dać systemowi czas na załadowanie środowiska
             final_schtasks_command = base_schtasks_command + ['/SC', 'ONLOGON', '/DELAY', '0001:00']
         else:
-            logging.warning(f"Nieznany typ wyzwalacza '{trigger_type}', używam domyślnego ONLOGON.")
             final_schtasks_command = base_schtasks_command + ['/SC', 'ONLOGON', '/DELAY', '0001:00']
 
         result = subprocess.run(
@@ -123,8 +120,7 @@ Remove-Item -Path "{script_path}" -Force -ErrorAction SilentlyContinue
             return json.dumps({"status": "success", "details": f"Zadanie '{task_name}' zostało poprawnie zaplanowane."})
         else:
             error_msg = result.stdout or result.stderr
-            logging.error(
-                f"Nie udało się zaplanować zadania '{task_name}'. Kod: {result.returncode}\nBłąd: {error_msg}")
+            logging.error(f"Nie udało się zaplanować zadania '{task_name}'. Kod: {result.returncode}\nBłąd: {error_msg}")
             return json.dumps({"status": "failure", "details": error_msg})
     except Exception as e:
         logging.error(f"Krytyczny błąd podczas planowania zadania: {e}", exc_info=True)
@@ -133,7 +129,6 @@ Remove-Item -Path "{script_path}" -Force -ErrorAction SilentlyContinue
 
 def handle_client(conn, addr):
     logging.info(f"Połączono z {addr} - obsługa w wątku {threading.get_ident()}")
-    response_json = ""
     try:
         header_bytes = conn.recv(4)
         if not header_bytes: return
