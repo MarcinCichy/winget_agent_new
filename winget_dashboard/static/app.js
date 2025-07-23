@@ -1,29 +1,24 @@
 document.addEventListener('DOMContentLoaded', () => {
 
-    // --- NOWA FUNKCJA DO ZARZĄDZANIA UKŁADEM ---
     const adjustLayout = () => {
         const header = document.querySelector('.header-container');
         const footer = document.querySelector('.main-footer');
         const body = document.body;
 
         if (header) {
-            // Pobierz wysokość nagłówka i dodaj 1.5rem (24px) marginesu
             const headerHeight = header.offsetHeight;
             body.style.paddingTop = `${headerHeight + 24}px`;
         }
         if (footer) {
-            // Pobierz wysokość stopki i dodaj 1rem (16px) marginesu
             const footerHeight = footer.offsetHeight;
             body.style.paddingBottom = `${footerHeight + 16}px`;
         }
     };
 
-    // Uruchom funkcję po załadowaniu strony i przy każdej zmianie rozmiaru okna
     adjustLayout();
     window.addEventListener('resize', adjustLayout);
 
 
-    // --- FUNKCJE POMOCNICZE ---
     function forceReload() {
         const url = new URL(window.location);
         url.searchParams.set('t', new Date().getTime());
@@ -32,7 +27,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const pollTaskStatus = (taskId, onUpdate, onComplete, onError) => {
         let attempts = 0;
-        const maxAttempts = 36; // 3 minuty max (36 * 5s)
+        const maxAttempts = 36;
         const interval = setInterval(() => {
             attempts++;
             if (attempts > maxAttempts) {
@@ -43,11 +38,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
             fetch(`/api/task_status/${taskId}`)
                 .then(response => {
-                    if (!response.ok) throw new Error('Błąd serwera przy sprawdzaniu statusu.');
+                    if (!response.ok) {
+                        if (response.status === 404) return { status: 'zakończone' };
+                        throw new Error('Błąd serwera przy sprawdzaniu statusu.');
+                    }
                     return response.json();
                 })
                 .then(data => {
-                    if (data.status === 'zakończone' || data.status === 'błąd' || data.status === 'not_found') {
+                    const finalStatuses = ['zakończone', 'błąd', 'niepowodzenie_interwencja_uzytkownika', 'not_found', 'odroczone_aplikacja_uruchomiona'];
+                    if (finalStatuses.includes(data.status)) {
                         clearInterval(interval);
                         if (onComplete) onComplete(data.status);
                     } else {
@@ -56,13 +55,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 })
                 .catch(err => {
                     clearInterval(interval);
-                    console.error("Błąd odpytywania o status zadania:", err); // <-- DODAJ TĘ LINIĘ
+                    console.error("Błąd odpytywania o status zadania:", err);
                     if (onError) onError(err);
                 });
-        }, 5000); // Pytaj co 5 sekund
+        }, 5000);
     };
-
-    // --- LOGIKA ELEMENTÓW ---
 
     const toggleButton = document.getElementById('theme-toggle');
     const htmlEl = document.documentElement;
@@ -73,31 +70,130 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    document.querySelectorAll('.refresh-btn').forEach(button => {
+    function handleActionButtonClick(e) {
+        e.preventDefault();
+        const target = e.target.closest('[data-action]');
+        if (!target) return;
+
+        const action = target.dataset.action;
+        const computerId = target.dataset.computerId;
+        const packageId = target.dataset.packageId;
+        const force = action.startsWith('force_');
+
+        let apiUrl = '';
+        let confirmMsg = '';
+
+        if (action.includes('uninstall')) {
+            const appName = target.closest('tr').cells[0].textContent.trim();
+            apiUrl = `/api/computer/${computerId}/uninstall`;
+            confirmMsg = `Czy na pewno chcesz ${force ? 'WYMUSIĆ deinstalację' : 'poprosić o deinstalację'} aplikacji "${appName}"?`;
+        } else if (action.includes('update_os')) {
+            apiUrl = `/api/computer/${computerId}/update_os`;
+            confirmMsg = `Czy na pewno chcesz ${force ? 'WYMUSIĆ aktualizację' : 'poprosić o aktualizację'} systemu Windows? Może to wymagać restartu komputera.`;
+        } else { // Domyślnie aktualizacja aplikacji
+            const appName = target.closest('tr').cells[1].textContent.trim();
+            apiUrl = `/api/computer/${computerId}/update`;
+            confirmMsg = `Czy na pewno chcesz ${force ? 'WYMUSIĆ aktualizację' : 'poprosić o aktualizację'} aplikacji "${appName}"?`;
+        }
+
+        if (!confirm(confirmMsg)) {
+            return;
+        }
+
+        const actionGroup = target.closest('.action-group');
+        const buttonToDisable = actionGroup.querySelector('.main-action');
+        buttonToDisable.textContent = 'Zlecanie...';
+        buttonToDisable.disabled = true;
+
+        fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ package_id: packageId, force: force })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status !== 'success') throw new Error(data.message || 'Nie udało się zlecić zadania.');
+            forceReload();
+        })
+        .catch(error => {
+            console.error("Błąd sieci:", error);
+            alert("Wystąpił błąd: " + error.message);
+            buttonToDisable.textContent = action.includes('uninstall') ? 'Odinstaluj' : 'Poproś';
+            buttonToDisable.disabled = false;
+        });
+    }
+
+    document.querySelectorAll('.action-group').forEach(group => {
+        const toggleBtn = group.querySelector('.dropdown-toggle');
+        const menu = group.querySelector('.dropdown-menu');
+
+        if (!toggleBtn || !menu) return;
+
+        toggleBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            document.querySelectorAll('.dropdown-menu.show').forEach(otherMenu => {
+                if (otherMenu !== menu) {
+                    otherMenu.classList.remove('show');
+                }
+            });
+            menu.classList.toggle('show');
+        });
+
+        group.addEventListener('click', (e) => {
+            if (e.target.matches('.main-action, .dropdown-item')) {
+                handleActionButtonClick(e);
+            }
+        });
+    });
+
+    window.addEventListener('click', (e) => {
+        if (!e.target.closest('.action-group')) {
+            document.querySelectorAll('.dropdown-menu.show').forEach(menu => {
+                menu.classList.remove('show');
+            });
+        }
+    });
+
+    const modal = document.getElementById('error-modal');
+    if (modal) {
+        const closeBtn = modal.querySelector('.close-btn');
+        const errorContent = document.getElementById('error-details-content');
+
+        document.querySelectorAll('.details-btn').forEach(button => {
+            button.addEventListener('click', function() {
+                const taskId = this.dataset.taskId;
+                fetch(`/api/task_status/${taskId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data && data.result_details) {
+                            errorContent.textContent = data.result_details;
+                            modal.style.display = 'block';
+                        } else if (data.status) {
+                            errorContent.textContent = `Brak szczegółów. Status zadania: ${data.status}`;
+                            modal.style.display = 'block';
+                        } else {
+                            alert('Brak szczegółów błędu dla tego zadania.');
+                        }
+                    });
+            });
+        });
+
+        closeBtn.onclick = () => { modal.style.display = 'none'; };
+        window.onclick = (event) => {
+            if (event.target == modal) {
+                modal.style.display = 'none';
+            }
+        };
+    }
+
+    document.querySelectorAll('.refresh-btn[data-computer-id]').forEach(button => {
         button.addEventListener('click', function() {
             const computerId = this.dataset.computerId;
             const originalText = this.textContent;
-
-            const statusCell = this.closest('tr')?.cells[3];
-            const notificationBar = document.getElementById('notification-bar');
-
-            const updateStatusText = (text) => {
-                const capitalizedText = text.charAt(0).toUpperCase() + text.slice(1);
-                if (statusCell) statusCell.innerHTML = `<span class="status-pending">${capitalizedText}</span>`;
-                if (notificationBar) {
-                    notificationBar.textContent = capitalizedText;
-                    notificationBar.style.backgroundColor = '#007bff';
-                    notificationBar.style.display = 'block';
-                }
-            };
-
-            const revertButton = () => {
-                this.textContent = originalText;
-                this.disabled = false;
-            };
-
             this.textContent = 'Wysyłanie...';
             this.disabled = true;
+
+            const notificationBar = document.getElementById('notification-bar');
 
             fetch(`/api/computer/${computerId}/refresh`, { method: 'POST' })
                 .then(response => {
@@ -106,14 +202,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 })
                 .then(data => {
                     if (data.status === 'success' && data.task_id) {
-                        updateStatusText('Zlecono');
+                        if (notificationBar) {
+                            notificationBar.textContent = 'Zlecono odświeżenie. Oczekiwanie na raport...';
+                            notificationBar.style.backgroundColor = '#007bff';
+                            notificationBar.style.display = 'block';
+                        } else {
+                            this.textContent = "Czekam...";
+                        }
                         pollTaskStatus(
                             data.task_id,
-                            (status) => updateStatusText(`W toku (${status})`),
+                            (status) => { if(notificationBar) notificationBar.textContent = `W toku... (Status: ${status})` },
                             (status) => forceReload(),
                             (error) => {
-                                updateStatusText('Błąd odpytywania!');
-                                revertButton();
+                                if(notificationBar) {
+                                    notificationBar.textContent = 'Błąd odpytywania!';
+                                    notificationBar.style.backgroundColor = '#dc3545';
+                                }
+                                this.textContent = originalText;
+                                this.disabled = false;
                             }
                         );
                     } else {
@@ -121,73 +227,28 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 }).catch(error => {
                     console.error("Błąd:", error);
-                    updateStatusText('Błąd zlecenia!');
-                    revertButton();
+                    if (notificationBar) {
+                        notificationBar.textContent = 'Błąd zlecenia odświeżenia!';
+                        notificationBar.style.backgroundColor = '#dc3545';
+                        notificationBar.style.display = 'block';
+                    }
+                    this.textContent = originalText;
+                    this.disabled = false;
                 });
         });
     });
 
-    document.querySelectorAll('.update-btn:not(.uninstall-btn)').forEach(button => {
-        button.addEventListener('click', function() {
-            const computerId = this.dataset.computerId;
-            const packageId = this.dataset.packageId;
-            const appName = this.closest('tr').cells[1].textContent;
+    const refreshAllBtn = document.getElementById('refresh-all-btn');
+    if(refreshAllBtn) {
+        refreshAllBtn.addEventListener('click', function() {
+            if (!confirm('Czy na pewno chcesz zlecić odświeżenie na wszystkich komputerach?')) return;
 
-            if (!confirm(`Czy na pewno chcesz zlecić aktualizację aplikacji "${appName}"?`)) return;
-
-            this.disabled = true;
-            this.textContent = 'Zlecanie...';
-
-            fetch(`/api/computer/${computerId}/update`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ package_id: packageId })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status !== 'success' || !data.task_id) {
-                    throw new Error('Nie udało się zlecić zadania aktualizacji.');
-                }
-                forceReload();
-            })
-            .catch(error => {
-                console.error("Błąd sieci:", error);
-                this.textContent = "Błąd";
-                alert("Wystąpił błąd: " + error.message);
+            const buttons = document.querySelectorAll('.refresh-btn[data-computer-id]');
+            buttons.forEach(btn => {
+                btn.click();
             });
         });
-    });
-
-    document.querySelectorAll('.uninstall-btn').forEach(button => {
-        button.addEventListener('click', function() {
-            const computerId = this.dataset.computerId;
-            const packageId = this.dataset.packageId;
-            const appName = this.closest('tr').cells[0].textContent;
-
-            if (!confirm(`Czy na pewno chcesz zlecić deinstalację aplikacji "${appName}"?\n\nUWAGA: Ta akcja jest nieodwracalna!`)) return;
-
-            this.disabled = true;
-            this.textContent = 'Zlecanie...';
-
-            fetch(`/api/computer/${computerId}/uninstall`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ package_id: packageId })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status !== 'success' || !data.task_id) {
-                    throw new Error('Nie udało się zlecić zadania deinstalacji.');
-                }
-                forceReload();
-            })
-            .catch(error => {
-                console.error("Błąd sieci:", error);
-                this.textContent = "Błąd";
-                alert("Wystąpił błąd: " + error.message);
-            });
-        });
-    });
+    }
 
     const blacklistForm = document.getElementById('blacklist-form');
     if (blacklistForm) {
@@ -197,13 +258,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const keywords = document.getElementById('blacklist-keywords').value;
             const button = this.querySelector('button[type="submit"]');
             const notificationBar = document.getElementById('notification-bar');
-            const originalButtonText = button.textContent;
-
-            const revertButton = () => {
-                button.textContent = originalButtonText;
-                button.disabled = false;
-            };
-
             button.textContent = 'Zapisywanie...';
             button.disabled = true;
 
@@ -228,7 +282,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         (error) => {
                             notificationBar.textContent = 'Błąd odpytywania!';
                             notificationBar.style.backgroundColor = '#dc3545';
-                            revertButton();
+                            button.textContent = 'Zapisz zmiany';
+                            button.disabled = false;
                         }
                     );
                 } else { throw new Error('Nie otrzymano ID zadania po zleceniu odświeżenia.'); }
@@ -237,34 +292,99 @@ document.addEventListener('DOMContentLoaded', () => {
                 console.error("Błąd:", error);
                 notificationBar.textContent = 'Wystąpił błąd. Sprawdź konsolę.';
                 notificationBar.style.backgroundColor = '#dc3545';
-                revertButton();
+                button.textContent = 'Zapisz zmiany';
+                button.disabled = false;
             });
         });
     }
 
-    const refreshAllBtn = document.getElementById('refresh-all-btn');
-    if (refreshAllBtn) {
-        refreshAllBtn.addEventListener('click', function() {
-            if (!confirm('Czy na pewno chcesz zlecić odświeżenie dla WSZYSTKICH komputerów?')) return;
-            this.textContent = 'Wysyłanie...';
-            this.disabled = true;
-            fetch('/api/computers/refresh_all', { method: 'POST' })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'success') {
-                        alert(`${data.message}\nStrona przeładuje się automatycznie za około minuty, aby dać agentom czas na odpowiedź.`);
-                        setTimeout(forceReload, 60000);
-                    } else {
-                        alert('Wystąpił błąd podczas zlecania zadań.');
-                        this.textContent = "Odśwież wszystkie";
-                        this.disabled = false;
+    const generateAgentForm = document.getElementById('generate-agent-form');
+    if (generateAgentForm) {
+        generateAgentForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const button = document.getElementById('generate-agent-btn');
+            const originalText = button.textContent;
+            button.textContent = 'Generowanie...';
+            button.disabled = true;
+            const formData = new FormData(this);
+            fetch(this.action, { method: 'POST', body: formData })
+            .then(response => {
+                if (!response.ok) {
+                    return response.text().then(text => { throw new Error(text || 'Błąd serwera podczas generowania pliku.')});
+                }
+                const disposition = response.headers.get('Content-Disposition');
+                let filename = 'agent.exe';
+                if (disposition && disposition.indexOf('attachment') !== -1) {
+                    const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+                    const matches = filenameRegex.exec(disposition);
+                    if (matches != null && matches[1]) {
+                        filename = matches[1].replace(/['"]/g, '');
                     }
+                }
+                return response.blob().then(blob => ({ blob, filename }));
+            })
+            .then(({ blob, filename }) => {
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                a.remove();
+                alert('Plik agent.exe został pomyślnie wygenerowany i pobrany!');
+            })
+            .catch(error => {
+                console.error('Błąd generowania agenta:', error);
+                alert('Wystąpił błąd podczas generowania agenta. Sprawdź konsolę przeglądarki i logi serwera.');
+            })
+            .finally(() => {
+                button.textContent = originalText;
+                button.disabled = false;
+            });
+        });
+    }
+
+    const agentFileInput = document.getElementById('agent_file_input');
+    const fileChosenLabel = document.getElementById('file-chosen-label');
+    if (agentFileInput && fileChosenLabel) {
+        agentFileInput.addEventListener('change', function() {
+            if (this.files.length > 0) {
+                fileChosenLabel.textContent = this.files[0].name;
+                fileChosenLabel.style.opacity = '1';
+                fileChosenLabel.style.fontStyle = 'normal';
+            } else {
+                fileChosenLabel.textContent = 'Nie wybrano pliku.';
+                fileChosenLabel.style.opacity = '0.7';
+                fileChosenLabel.style.fontStyle = 'italic';
+            }
+        });
+    }
+
+    const deployBtn = document.getElementById('deploy-all-btn');
+    if (deployBtn) {
+        deployBtn.addEventListener('click', function() {
+            if (!confirm('Czy na pewno chcesz zlecić aktualizację agenta na WSZYSTKICH komputerach? Ta akcja jest nieodwracalna.')) {
+                return;
+            }
+            const originalText = this.textContent;
+            this.textContent = 'Wdrażanie...';
+            this.disabled = true;
+            fetch('/api/agent/deploy_update', { method: 'POST' })
+                .then(response => response.json().then(data => ({ok: response.ok, data})))
+                .then(({ok, data}) => {
+                    if (!ok) throw new Error(data.message || 'Błąd serwera');
+                    alert(data.message);
                 })
                 .catch(error => {
-                    console.error("Błąd sieci:", error);
-                    alert('Błąd sieci. Sprawdź konsolę.');
-                    this.textContent = "Odśwież wszystkie";
+                    console.error("Błąd wdrażania aktualizacji:", error);
+                    alert(`Wystąpił błąd: ${error.message}`);
+                })
+                .finally(() => {
+                    this.textContent = 'Wdróż aktualizację na wszystkich komputerach';
                     this.disabled = false;
+                    forceReload();
                 });
         });
     }

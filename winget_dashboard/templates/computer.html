@@ -43,12 +43,11 @@
     <table>
         <thead style="background-color: #28a745;">
             <tr>
-                <th>Typ</th>
+                <th style="width: 15%;">Typ</th>
                 <th>Nazwa / Tytuł</th>
-                <th>Status</th>
-                <th>Wersja obecna</th>
-                <th>Wersja dostępna / Nr KB</th>
-                <th>Akcja</th>
+                <th style="width: 20%;">Status</th>
+                <th style="width: 15%;">Wersje</th>
+                <th style="width: 15%;">Akcja</th>
             </tr>
         </thead>
         <tbody>
@@ -57,30 +56,61 @@
                 <td>{{ 'System Operacyjny' if update.update_type == 'OS' else 'Aplikacja' }}</td>
                 <td>{{ update.name }}</td>
                 <td>
-                    {% if update.app_id in task_statuses %}
-                        {% set task_status = task_statuses[update.app_id] %}
-                        <span class="status-pending">{{ task_status | capitalize }}</span>
+                    {% set task_key = 'os_update' if update.update_type == 'OS' else update.app_id %}
+                    {% if task_key in task_statuses %}
+                        {% set task = task_statuses[task_key] %}
+                        <span class="status-pending">{{ task.status | replace('_', ' ') | capitalize }}</span>
+                        {% if 'niepowodzenie' in task.status or 'błąd' in task.status %}
+                            <button class="action-btn-link details-btn" data-task-id="{{ task.id }}">(pokaż szczegóły)</button>
+                        {% endif %}
                     {% else %}
                         <span>Dostępna</span>
                     {% endif %}
                 </td>
-                <td>{{ update.current_version or 'N/A' }}</td>
-                <td>{{ update.available_version or 'N/A' }}</td>
+                <td>{{ update.current_version or 'N/A' }} -> {{ update.available_version or 'N/A' }}</td>
                 <td>
-                    {% if update.update_type == 'APP' and update.app_id not in task_statuses %}
-                    <button class="action-btn update-btn" data-computer-id="{{ computer.id }}" data-package-id="{{ update.app_id }}">Aktualizuj</button>
+                    {% if update.update_type == 'APP' %}
+                        {% if update.app_id not in task_statuses %}
+                        <div class="action-group">
+                            <button class="action-btn update-btn main-action" data-action="request_update" data-computer-id="{{ computer.id }}" data-package-id="{{ update.app_id }}">Poproś</button>
+                            <button class="action-btn update-btn dropdown-toggle" aria-haspopup="true" aria-expanded="false">&#9662;</button>
+                            <div class="dropdown-menu">
+                                <a href="#" class="dropdown-item" data-action="request_update" data-computer-id="{{ computer.id }}" data-package-id="{{ update.app_id }}">Poproś o aktualizację</a>
+                                <a href="#" class="dropdown-item" data-action="force_update" data-computer-id="{{ computer.id }}" data-package-id="{{ update.app_id }}">Wymuś aktualizację</a>
+                            </div>
+                        </div>
+                        {% endif %}
+                    {% elif update.update_type == 'OS' %}
+                        {% if 'os_update' not in task_statuses %}
+                        <div class="action-group">
+                             <button class="action-btn update-btn main-action" data-action="request_os_update" data-computer-id="{{ computer.id }}" data-package-id="os_update">Poproś</button>
+                             <button class="action-btn update-btn dropdown-toggle" aria-haspopup="true" aria-expanded="false">&#9662;</button>
+                             <div class="dropdown-menu">
+                                 <a href="#" class="dropdown-item" data-action="request_os_update" data-computer-id="{{ computer.id }}" data-package-id="os_update">Poproś o aktualizację</a>
+                                 <a href="#" class="dropdown-item" data-action="force_os_update" data-computer-id="{{ computer.id }}" data-package-id="os_update">Wymuś aktualizację</a>
+                             </div>
+                         </div>
+                        {% endif %}
                     {% endif %}
                 </td>
             </tr>
             {% else %}
-            <tr><td colspan="6">Brak oczekujących aktualizacji.</td></tr>
+            <tr><td colspan="5">Brak oczekujących aktualizacji.</td></tr>
             {% endfor %}
         </tbody>
     </table>
 
     <h2>Zainstalowane aplikacje ({{ apps|length }})</h2>
     <table>
-        <thead style="background-color: #17a2b8;"><tr><th>Nazwa</th><th>ID Aplikacji</th><th>Wersja</th><th>Akcja</th></tr></thead>
+        <thead style="background-color: #17a2b8;">
+            <tr>
+                <th>Nazwa</th>
+                <th>ID Aplikacji</th>
+                <th style="width: 15%;">Wersja</th>
+                <th style="width: 20%;">Status</th>
+                <th style="width: 15%;">Akcja</th>
+            </tr>
+        </thead>
         <tbody>
             {% for app in apps %}
             <tr>
@@ -88,16 +118,44 @@
                 <td>{{ app.app_id }}</td>
                 <td>{{ app.version }}</td>
                 <td>
-                    {% if app.app_id in task_statuses and task_statuses[app.app_id] == 'uninstall_package' %}
-                        <span class="status-pending">{{ task_statuses[app.app_id] | capitalize }}</span>
-                    {% else %}
-                        <button class="action-btn update-btn uninstall-btn" data-computer-id="{{ computer.id }}" data-package-id="{{ app.app_id }}">Odinstaluj</button>
+                    {% if app.app_id in task_statuses %}
+                        {% set task = task_statuses[app.app_id] %}
+                        {% if task.command.startswith('request_uninstall') or task.command.startswith('force_uninstall') %}
+                            <span class="status-pending">{{ task.status | replace('_', ' ') | capitalize }}</span>
+                            {% if 'niepowodzenie' in task.status or 'błąd' in task.status %}
+                                <button class="action-btn-link details-btn" data-task-id="{{ task.id }}">(pokaż szczegóły)</button>
+                            {% endif %}
+                        {% endif %}
+                    {% endif %}
+                </td>
+                <td>
+                    {% if not task_statuses[app.app_id] or not (task_statuses[app.app_id].command.startswith('request_uninstall') or task_statuses[app.app_id].command.startswith('force_uninstall')) %}
+                    <div class="action-group">
+                        <button class="action-btn uninstall-btn main-action" data-action="request_uninstall" data-computer-id="{{ computer.id }}" data-package-id="{{ app.app_id }}">Poproś</button>
+                        <button class="action-btn uninstall-btn dropdown-toggle" aria-haspopup="true" aria-expanded="false">&#9662;</button>
+                        <div class="dropdown-menu">
+                            <a href="#" class="dropdown-item" data-action="request_uninstall" data-computer-id="{{ computer.id }}" data-package-id="{{ app.app_id }}">Poproś o deinstalację</a>
+                            <a href="#" class="dropdown-item" data-action="force_uninstall" data-computer-id="{{ computer.id }}" data-package-id="{{ app.app_id }}">Wymuś deinstalację</a>
+                        </div>
+                    </div>
                     {% endif %}
                 </td>
             </tr>
             {% else %}
-            <tr><td colspan="4">Brak danych o aplikacjach.</td></tr>
+            <tr><td colspan="5">Brak danych o aplikacjach.</td></tr>
             {% endfor %}
         </tbody>
     </table>
+
+    <div id="error-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Szczegóły błędu zadania</h2>
+                <button class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <pre id="error-details-content"></pre>
+            </div>
+        </div>
+    </div>
 {% endblock %}

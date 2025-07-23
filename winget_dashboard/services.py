@@ -5,6 +5,69 @@ import tempfile
 import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from flask import current_app
+
+
+class AgentVersionService:
+    """Klasa do zarządzania wersją agenta na serwerze w oparciu o plik version.txt."""
+
+    def __init__(self):
+        self.builds_dir = os.path.join(current_app.root_path, '..', 'agent_builds')
+        self.agent_path = os.path.join(self.builds_dir, 'agent.exe')
+        self.version_path = os.path.join(self.builds_dir, 'version.txt')
+        os.makedirs(self.builds_dir, exist_ok=True)
+
+    def get_server_agent_version(self) -> str:
+        """Odczytuje wersję z pliku version.txt."""
+        try:
+            if os.path.exists(self.version_path):
+                with open(self.version_path, 'r') as f:
+                    return f.read().strip()
+        except Exception as e:
+            logging.error(f"Błąd odczytu pliku wersji: {e}")
+        return "1.0.0"
+
+    def get_suggested_next_version(self) -> str:
+        """Sugeruje następny numer wersji przez inkrementację ostatniej cyfry."""
+        current_version = self.get_server_agent_version()
+        parts = current_version.split('.')
+        try:
+            # Inkrementuj ostatnią część numeru wersji
+            parts[-1] = str(int(parts[-1]) + 1)
+            return ".".join(parts)
+        except (ValueError, IndexError):
+            # Jeśli obecny format jest niepoprawny, zasugeruj wersję bazową
+            return "1.0.1"
+
+    def set_server_agent_version(self, new_version: str):
+        """Zapisuje nową wersję do pliku version.txt."""
+        try:
+            with open(self.version_path, 'w') as f:
+                f.write(new_version)
+            logging.info(f"Ustawiono nową wersję agenta na serwerze: {new_version}")
+        except Exception as e:
+            logging.error(f"Błąd zapisu pliku wersji: {e}")
+
+    def get_server_agent_info(self):
+        """Zbiera kompletne informacje o agencie na serwerze."""
+        version = self.get_server_agent_version()
+        agent_info = {
+            'version': version,
+            'file_exists': False
+        }
+        if os.path.exists(self.agent_path):
+            try:
+                stat = os.stat(self.agent_path)
+                agent_info.update({
+                    'file_exists': True,
+                    'name': 'agent.exe',
+                    'size_kb': round(stat.st_size / 1024, 2),
+                    'modified_date': datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+                })
+            except Exception as e:
+                logging.error(f"Nie udało się odczytać metadanych pliku agenta: {e}")
+
+        return agent_info
 
 
 class AgentGenerator:
@@ -15,65 +78,44 @@ class AgentGenerator:
 
     def generate_exe(self, config: dict):
         if not shutil.which("pyinstaller"):
-            logging.error("Program 'pyinstaller' nie jest zainstalowany lub nie ma go w ścieżce PATH.")
             raise FileNotFoundError("PyInstaller nie jest dostępny na serwerze.")
 
+        agent_version = config.get('agent_version', '0.0.0')
         winget_path = config.get('winget_path', '').replace('\\', '\\\\')
 
         final_agent_code = self.template \
             .replace('__API_ENDPOINT_1__', config.get('api_endpoint_1', '')) \
             .replace('__API_ENDPOINT_2__', config.get('api_endpoint_2', '')) \
             .replace('__API_KEY__', config.get('api_key', '')) \
+            .replace('__AGENT_VERSION__', agent_version) \
             .replace('__LOOP_INTERVAL__', str(config.get('loop_interval', 60))) \
             .replace('__REPORT_INTERVAL__', str(config.get('report_interval', 3600))) \
             .replace('__WINGET_PATH__', winget_path)
 
         build_dir = tempfile.mkdtemp(prefix="winget-agent-build-")
         script_path = os.path.join(build_dir, "agent_service.py")
-
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(final_agent_code)
 
-        command = [
-            "pyinstaller", "--onefile",
-            "--hidden-import=win32timezone",
-            "--name", "agent",
-            script_path
-        ]
-
-        logging.info(f"Uruchamianie PyInstaller w katalogu: {build_dir}")
+        command = ["pyinstaller", "--onefile", "--hidden-import=win32timezone", "--name", "agent", script_path]
         try:
-            result = subprocess.run(command, check=True, capture_output=True, text=True, encoding='utf-8',
-                                    cwd=build_dir)
-            logging.info(f"PyInstaller output: {result.stdout}")
-
-            output_exe_path = os.path.join(build_dir, 'dist', 'agent.exe')
-            if not os.path.exists(output_exe_path):
-                raise FileNotFoundError(f"PyInstaller nie stworzył pliku agent.exe. Log: {result.stderr}")
-
-            return output_exe_path
-
+            subprocess.run(command, check=True, capture_output=True, text=True, encoding='utf-8', cwd=build_dir)
+            return os.path.join(build_dir, 'dist', 'agent.exe')
         except subprocess.CalledProcessError as e:
             logging.error(f"Błąd kompilacji PyInstaller: {e.stderr}")
-            shutil.rmtree(build_dir, ignore_errors=True)
             raise
 
 
 class ReportGenerator:
-    """Klasa do generowania treści raportów tekstowych."""
-
     def __init__(self, db_manager):
         self.db_manager = db_manager
 
     def _to_local_time(self, utc_dt):
         if not utc_dt: return "N/A"
         try:
-            if isinstance(utc_dt, str):
-                utc_dt = datetime.fromisoformat(str(utc_dt).split('.')[0])
-
-            utc_dt = utc_dt.replace(tzinfo=ZoneInfo("UTC"))
-            local_dt = utc_dt.astimezone(ZoneInfo("Europe/Warsaw"))
-            return local_dt.strftime('%Y-%m-%d %H:%M:%S')
+            if isinstance(utc_dt, str): utc_dt = datetime.fromisoformat(str(utc_dt).split('.')[0])
+            utc_dt = utc_dt.replace(tzinfo=ZoneInfo("UTC"));
+            return utc_dt.astimezone(ZoneInfo("Europe/Warsaw")).strftime('%Y-%m-%d %H:%M:%S')
         except (ValueError, TypeError):
             return str(utc_dt)
 
@@ -81,55 +123,29 @@ class ReportGenerator:
         content = []
         for cid in computer_ids:
             details = self.db_manager.get_computer_details_by_id(cid)
-            if not details: continue
-
-            # Ujednolicamy strukturę danych, aby pasowała do `get_report_details`
-            unified_data = {
-                'report': details['computer'],
-                'apps': details['apps'],
-                'updates': details['updates']
-            }
-            content.append(self.generate_single_report_content(unified_data))
+            if details: content.append(self.generate_single_report_content(
+                {'report': details['computer'], 'apps': details['apps'], 'updates': details['updates']}))
         return "\n\n".join(content)
 
     def generate_single_report_content(self, details):
-        report_info = details['report']
-        apps = details['apps']
-        updates = details['updates']
-
-        hostname = report_info['hostname']
-        ip_address = report_info['ip_address']
-
-        content = []
-        content.append(f"# RAPORT DLA KOMPUTERA: {hostname} ({ip_address})")
-
-        # Czas raportu będzie w kluczu 'report_timestamp' (z historii) lub 'last_report' (dla bieżącego)
-        report_time = report_info['report_timestamp'] if 'report_timestamp' in report_info.keys() else report_info[
-            'last_report']
+        report_info, apps, updates = details['report'], details['apps'], details['updates']
+        hostname, ip_address = report_info['hostname'], report_info['ip_address']
+        content = [f"# RAPORT DLA KOMPUTERA: {hostname} ({ip_address})"]
+        report_time = report_info.get('report_timestamp') or report_info.get('last_report')
         content.append(f"Data raportu: {self._to_local_time(report_time)}")
         content.append(
-            f"Data wygenerowania pliku: {datetime.now(ZoneInfo('Europe/Warsaw')).strftime('%Y-%m-%d %H:%M:%S')}")
-        content.append("")
-
+            f"Data wygenerowania pliku: {datetime.now(ZoneInfo('Europe/Warsaw')).strftime('%Y-%m-%d %H:%M:%S')}\n")
         if updates:
             content.append("## Oczekujące aktualizacje w raporcie:")
-            for item in updates:
-                if item['update_type'] == 'OS':
-                    content.append(f"* [SYSTEM] {item['name']} ({item['app_id']})")
-                else:
-                    content.append(
-                        f"* [APLIKACJA] {item['name']}: {item['current_version']} -> {item['available_version']}")
+            for item in updates: content.append(f"* [SYSTEM] {item['name']} ({item['app_id']})" if item[
+                                                                                                       'update_type'] == 'OS' else f"* [APLIKACJA] {item['name']}: {item['current_version']} -> {item['available_version']}")
         else:
             content.append("## Brak oczekujących aktualizacji w raporcie.")
-
         content.append("\n" + "=" * 30 + "\n")
-
         if apps:
             content.append("## Zainstalowane aplikacje w raporcie:")
-            for app in apps:
-                content.append(f"* {app['name']} (Wersja: {app['version']})")
+            for app in apps: content.append(f"* {app['name']} (Wersja: {app['version']})")
         else:
             content.append("## Brak zainstalowanych aplikacji w raporcie.")
-
         content.append("\n" + "=" * 80)
         return "\n".join(content)

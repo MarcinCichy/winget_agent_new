@@ -1,53 +1,110 @@
 {% extends "base.html" %}
 
-{% block title %}Ustawienia i Generator Agenta{% endblock %}
+{% block title %}Ustawienia i Zarządzanie Agentem{% endblock %}
 
 {% block header_main_left %}
     <a href="{{ url_for('views.index') }}" class="back-link">&larr; Powrót do strony głównej</a>
 {% endblock %}
 
 {% block sub_header %}
-    <h1>Generator Agenta</h1>
+    <h1>Ustawienia i Zarządzanie Agentem</h1>
 {% endblock %}
 
 {% block content %}
-    <p>Wypełnij poniższy formularz, aby wygenerować gotowy do wdrożenia plik wykonywalny <strong>agent.exe</strong>.</p>
-    <p>Plik ten będzie miał "wypalone" na stałe poniższe ustawienia, eliminując potrzebę konfiguracji na komputerach klienckich.</p>
-
     {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
+            <div id="notification-bar">
             {% for category, message in messages %}
-            <div class="notification-bar" style="background-color: #dc3545; color: white; padding: 1rem; margin-bottom: 1rem; border-radius: 5px;">{{ message }}</div>
+                <div class="flash-message {{ category }}">{{ message }}</div>
             {% endfor %}
+            </div>
         {% endif %}
     {% endwith %}
 
-    <form action="{{ url_for('views.generate_exe') }}" method="POST" class="settings-form">
-        <div class="form-group">
-            <label for="api_endpoint_1">Adres serwera (API Endpoint):</label>
-            <input type="text" id="api_endpoint_1" name="api_endpoint_1" value="http://TWOJ_ADRES_IP:5000" required>
-            <small>Podstawowy adres serwera (bez /api/report). Agent sam doda odpowiednie ścieżki.</small>
+    <div class="settings-grid">
+        <div class="settings-panel">
+            <h2>Generator Agenta</h2>
+            <p>Użyj tego formularza, aby stworzyć plik instalacyjny agenta z konkretną wersją.</p>
+
+            <form id="generate-agent-form" action="{{ url_for('views.generate_exe') }}" method="POST" class="settings-form">
+                <div class="form-group">
+                    <label for="agent_version">Wersja do wygenerowania:</label>
+                    <input type="text" id="agent_version" name="agent_version" value="{{ suggested_next_version }}" required>
+                    <small>Agent zostanie stworzony z tym numerem wersji.</small>
+                </div>
+                <div class="form-group">
+                    <label for="api_endpoint_1">Adres serwera (API Endpoint):</label>
+                    <input type="text" id="api_endpoint_1" name="api_endpoint_1" value="http://TWOJ_ADRES_IP:5000" required>
+                    <small>Podstawowy adres serwera (bez /api na końcu).</small>
+                </div>
+                <div class="form-group">
+                    <label for="api_key">Klucz API (API Key):</label>
+                    <input type="text" id="api_key" name="api_key" value="{{ server_api_key }}" required>
+                    <small>Klucz API musi być identyczny jak ten w pliku .env serwera.</small>
+                </div>
+
+                {# --- TUTAJ SĄ PRZYWRÓCONE, BRAKUJĄCE POLA --- #}
+                <div class="form-group">
+                    <label for="winget_path">Alternatywna ścieżka do winget.exe (opcjonalnie):</label>
+                    <input type="text" id="winget_path" name="winget_path" value="">
+                    <small>Podaj, jeśli winget jest w niestandardowej lokalizacji.</small>
+                </div>
+                <div class="form-group">
+                    <label for="loop_interval">Interwał sprawdzania zadań (w sekundach):</label>
+                    <input type="number" id="loop_interval" name="loop_interval" value="30" required>
+                    <small>Co ile sekund agent ma pytać serwer o nowe zadania.</small>
+                </div>
+                 <div class="form-group">
+                    <label for="report_interval">Interwał pełnego raportu (w sekundach):</label>
+                    <input type="number" id="report_interval" name="report_interval" value="3600" required>
+                    <small>Co ile sekund agent ma wysyłać pełny raport o stanie.</small>
+                </div>
+
+                <button id="generate-agent-btn" type="submit" class="action-btn btn-report">Generuj agent.exe</button>
+            </form>
         </div>
-        <div class="form-group">
-            <label for="api_key">Klucz API (API Key):</label>
-            <input type="text" id="api_key" name="api_key" value="{{ server_api_key }}" required>
-            <small>Klucz API musi być identyczny jak ten w pliku .env na serwerze.</small>
+
+        <div class="settings-panel">
+            <h2>Zarządzanie Wersją i Aktualizacjami</h2>
+            <div class="update-section">
+                <h3>Obecna Wersja Agenta na Serwerze</h3>
+                {% if server_agent_info.file_exists %}
+                    <p>
+                        <strong>Oficjalna wersja:</strong> <span class="status-ok">{{ server_agent_info.version }}</span><br>
+                        <strong>Data modyfikacji pliku .exe:</strong> {{ server_agent_info.modified_date }}
+                    </p>
+                {% else %}
+                    <p class="status-fail">Na serwerze nie ma jeszcze pliku agent.exe. Wgraj go poniżej, aby rozpocząć.</p>
+                {% endif %}
+            </div>
+
+            <div class="update-section">
+                <h3>Krok 1: Wgraj Nową Wersję Agenta</h3>
+                <p>Podaj numer wersji zgodny z wgrywanym plikiem `agent.exe`.</p>
+                <form action="{{ url_for('views.settings') }}" method="POST" enctype="multipart/form-data" class="settings-form">
+                    <div class="form-group">
+                        <label for="new_version">Nowy numer wersji:</label>
+                        <input type="text" id="new_version" name="new_version" value="{{ suggested_next_version }}" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Wybierz plik agent.exe:</label>
+                        <div class="file-upload-container">
+                            <label for="agent_file_input" class="action-btn btn-secondary">Wybierz agenta</label>
+                            <input type="file" id="agent_file_input" name="agent_file" accept=".exe" required class="file-upload-input">
+                            <span id="file-chosen-label" class="file-upload-label">Nie wybrano pliku.</span>
+                        </div>
+                    </div>
+                    <button type="submit" class="action-btn btn-report">Wgraj i ustaw nową wersję</button>
+                </form>
+            </div>
+
+            <div class="update-section">
+                <h3>Krok 2: Wdróż Aktualizację</h3>
+                <p>Zleć wszystkim agentom pobranie i zainstalowanie najnowszej wersji wgranej powyżej.</p>
+                <button id="deploy-all-btn" class="action-btn btn-secondary" {% if not server_agent_info.file_exists %}disabled{% endif %}>
+                    Wdróż aktualizację na wszystkich komputerach
+                </button>
+            </div>
         </div>
-        <div class="form-group">
-            <label for="winget_path">Alternatywna ścieżka do winget.exe (opcjonalnie):</label>
-            <input type="text" id="winget_path" name="winget_path" value="">
-            <small>Podaj, jeśli winget jest w niestandardowej lokalizacji.</small>
-        </div>
-        <div class="form-group">
-            <label for="loop_interval">Interwał sprawdzania zadań (w sekundach):</label>
-            <input type="number" id="loop_interval" name="loop_interval" value="30" required>
-            <small>Co ile sekund agent ma pytać serwer o nowe zadania (np. 300 = 5 minut).</small>
-        </div>
-         <div class="form-group">
-            <label for="report_interval">Interwał pełnego raportu (w sekundach):</label>
-            <input type="number" id="report_interval" name="report_interval" value="3600" required>
-            <small>Co ile sekund agent ma wysyłać pełny raport o stanie aplikacji (np. 3600 = 1 godzina).</small>
-        </div>
-        <button type="submit" class="action-btn btn-report">Generuj agent.exe</button>
-    </form>
+    </div>
 {% endblock %}

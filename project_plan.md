@@ -69,7 +69,7 @@
 ## 5. NICE-TO-HAVE/ROZWÓJ
 
 - [x] Edytowalna blacklist w panelu webowym.
-- [ ] Dynamiczna aktualizacja blacklisty w agentach.
+- [x] Dynamiczna aktualizacja blacklisty w agentach.
 - [ ] Mikroserwisy lub dockerizacja.
 - [x] Responsywność mobilna panelu.
 - [ ] Automatyzacja testów (np. CI/CD).
