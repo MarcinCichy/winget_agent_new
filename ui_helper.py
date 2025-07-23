@@ -61,15 +61,19 @@ def run_command_as_user(command_str):
             creationflags=subprocess.CREATE_NO_WINDOW,
             timeout=1800
         )
-        clean_stdout = result.stdout.replace('\\', '/')
-        clean_stderr = result.stderr.replace('\\', '/')
-        if result.returncode == 0 or "Successfully installed" in clean_stdout or "successfully installed" in clean_stderr:
+
+        # USUNIĘTE LINIE POWODUJĄCE BŁĄD
+        # clean_stdout = result.stdout.replace('\\', '/')
+        # clean_stderr = result.stderr.replace('\\', '/')
+
+        # Używamy teraz surowego wyniku z subprocess
+        if result.returncode == 0 or "Successfully installed" in result.stdout or "successfully installed" in result.stderr:
             logging.info(f"Polecenie zakończone sukcesem. Kod wyjścia: {result.returncode}")
-            return json.dumps({"status": "success", "details": clean_stdout})
+            return json.dumps({"status": "success", "details": result.stdout})  # Używamy result.stdout
         else:
             logging.error(
-                f"Polecenie nie powiodło się. Kod: {result.returncode}\nSTDOUT: {clean_stdout}\nSTDERR: {clean_stderr}")
-            error_details = f"Kod wyjścia: {result.returncode}\n\nSTDOUT:\n{clean_stdout}\n\nSTDERR:\n{clean_stderr}"
+                f"Polecenie nie powiodło się. Kod: {result.returncode}\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}")
+            error_details = f"Kod wyjścia: {result.returncode}\n\nSTDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}"
             return json.dumps({"status": "failure", "details": error_details})
     except Exception as e:
         logging.error(f"Krytyczny błąd wykonania polecenia przez UI Helpera: {e}", exc_info=True)
