@@ -392,5 +392,34 @@ class AgentService(win32serviceutil.ServiceFramework):
             except Exception as e: logging.error(f"Nieoczekiwany błąd w pętli: {e}", exc_info=True); time.sleep(60)
 
 if __name__ == '__main__':
-    if len(sys.argv) == 1: servicemanager.Initialize(); servicemanager.PrepareToHostSingle(AgentService); servicemanager.StartServiceCtrlDispatcher()
-    else: win32serviceutil.HandleCommandLine(AgentService)
+    # Sprawdzamy, czy przekazano argument i czy jest to 'status'
+    if len(sys.argv) > 1 and sys.argv[1].lower() == 'status':
+        # Słownik tłumaczący kody statusu na czytelne nazwy
+        status_dict = {
+            win32service.SERVICE_STOPPED: "Zatrzymana",
+            win32service.SERVICE_START_PENDING: "Uruchamianie...",
+            win32service.SERVICE_STOP_PENDING: "Zatrzymywanie...",
+            win32service.SERVICE_RUNNING: "Uruchomiona",
+            win32service.SERVICE_CONTINUE_PENDING: "Wznawianie...",
+            win32service.SERVICE_PAUSE_PENDING: "Pauzowanie...",
+            win32service.SERVICE_PAUSED: "Spauzowana",
+        }
+        try:
+            # Pytamy system o status naszej usługi
+            status_info = win32serviceutil.QueryServiceStatus(AgentService._svc_name_)
+            # Wyświetlamy przetłumaczony status
+            print(f"Status usługi '{AgentService._svc_display_name_}': {status_dict.get(status_info[1], 'Nieznany')}")
+        except pywintypes.error as e:
+            # Obsługa błędu, gdy usługa nie jest zainstalowana (kod błędu 1060)
+            if e.winerror == 1060:
+                print(f"Błąd: Usługa '{AgentService._svc_display_name_}' nie jest zainstalowana.")
+            else:
+                print(f"Wystąpił nieoczekiwany błąd: {e}")
+
+    # Jeśli nie było komendy 'status', używamy standardowej obsługi
+    elif len(sys.argv) == 1:
+        servicemanager.Initialize()
+        servicemanager.PrepareToHostSingle(AgentService)
+        servicemanager.StartServiceCtrlDispatcher()
+    else:
+        win32serviceutil.HandleCommandLine(AgentService)
