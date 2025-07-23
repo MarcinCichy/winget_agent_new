@@ -76,7 +76,7 @@ class UiClient:
             logging.error("Timeout podczas oczekiwania na odpowiedź od Pomocnika UI.")
             return "no_response"
         except ConnectionRefusedError:
-            logging.error("Odmowa połączenia z Pomocnikiem UI. Czy jest uruchomiony?")
+            logging.warning("Odmowa połączenia z Pomocnikiem UI. Prawdopodobnie żaden użytkownik nie jest zalogowany.")
             return "no_helper"
         except Exception as e:
             logging.error(f"Błąd komunikacji z Pomocnikiem UI: {e}", exc_info=True)
@@ -104,26 +104,13 @@ class ApiClient:
         self._request('post', '/api/tasks/result', data=json.dumps(payload))
 
 class WingetManager:
-    def __init__(self, winget_path_conf):
-        self.winget_path = self._find_winget_path(winget_path_conf)
-        if not self.winget_path: logging.error("KRYTYCZNY BŁĄD: Nie można zlokalizować winget.exe")
-        else: logging.info(f"Używana ścieżka do winget: {self.winget_path}")
-    def _find_winget_path(self, winget_path_conf):
-        if winget_path_conf and os.path.isfile(winget_path_conf): return winget_path_conf
-        try:
-            user_root = os.path.expandvars(r"C:\\Users")
-            if os.path.isdir(user_root):
-                for username in os.listdir(user_root):
-                    winapps_path = os.path.join(user_root, username, "AppData", "Local", "Microsoft", "WindowsApps", "winget.exe")
-                    if os.path.isfile(winapps_path): return winapps_path
-        except Exception as e: logging.warning(f"Nie udało się przeszukać folderów użytkowników: {e}")
-        result = CommandRunner.run("where.exe winget", timeout=10)
-        if result and result.returncode == 0 and result.stdout: return result.stdout.strip().split('\n')[0]
-        return "winget"
-    def _parse_winget_output(self, result_obj):
-        if not result_obj or not hasattr(result_obj, 'stdout'): return []
+    def __init__(self, winget_path_conf=""):
+        logging.info("WingetManager został zainicjowany w trybie delegowania do UiClient.")
+
+    def _parse_winget_output(self, result_obj_stdout):
+        if not result_obj_stdout: return []
         apps, header_line, header_indices = [], "", {}
-        for line in result_obj.stdout.strip().split('\n'):
+        for line in result_obj_stdout.strip().split('\n'):
             if 'Name' in line and 'Id' in line and 'Version' in line:
                 header_line = line
                 try:
@@ -141,14 +128,34 @@ class WingetManager:
                 if app['name'] and app['id']: apps.append(app)
             except (ValueError, IndexError) as e: logging.warning(f"Pominięto linię winget: {line} | Błąd: {e}")
         return apps
+
+    def _get_winget_data(self, command):
+        request_data = {"type": "execute_command", "command": command}
+        response_json = UiClient.send_request(request_data)
+        try:
+            if response_json in ["no_response", "no_helper", "error"]:
+                 logging.warning(f"Nie udało się uzyskać danych od pomocnika UI dla polecenia '{command}'. Status: {response_json}")
+                 return None
+            response = json.loads(response_json)
+            if response.get('status') == 'success':
+                return response.get('details', '')
+            else:
+                logging.error(f"Pomocnik UI zwrócił błąd dla polecenia '{command}': {response.get('details')}")
+                return None
+        except (json.JSONDecodeError, TypeError):
+            logging.error(f"Nie udało się przetworzyć odpowiedzi od Pomocnika UI: {response_json}")
+            return None
+
     def get_installed_apps(self, blacklist):
-        result = CommandRunner.run(f'& "{self.winget_path}" list --accept-source-agreements --disable-interactivity')
-        if not result or result.returncode != 0: return []
-        all_apps = self._parse_winget_output(result)
+        stdout = self._get_winget_data("winget list --accept-source-agreements --disable-interactivity")
+        if not stdout: return []
+        all_apps = self._parse_winget_output(stdout)
         return [app for app in all_apps if not any(keyword.lower() in app['name'].lower() for keyword in blacklist)]
+
     def get_available_updates(self):
-        result = CommandRunner.run(f'& "{self.winget_path}" upgrade --accept-source-agreements --disable-interactivity')
-        return self._parse_winget_output(result) if result and result.returncode == 0 else []
+        stdout = self._get_winget_data("winget upgrade --accept-source-agreements --disable-interactivity")
+        if not stdout: return []
+        return self._parse_winget_output(stdout)
 
 class SystemInfo:
     @staticmethod
@@ -189,7 +196,15 @@ class Agent:
     def run_full_report(self):
         try:
             self.blacklist = self.api_client.get_blacklist(self.hostname)
-            report_data = {"hostname": self.hostname, "ip_address": SystemInfo.get_active_ip(), "agent_version": self.version, "reboot_required": SystemInfo.is_reboot_required(), "installed_apps": self.winget_manager.get_installed_apps(self.blacklist), "available_app_updates": self.winget_manager.get_available_updates(), "pending_os_updates": SystemInfo.get_pending_os_updates()}
+            report_data = {
+                "hostname": self.hostname,
+                "ip_address": SystemInfo.get_active_ip(),
+                "agent_version": self.version,
+                "reboot_required": SystemInfo.is_reboot_required(),
+                "installed_apps": self.winget_manager.get_installed_apps(self.blacklist),
+                "available_app_updates": self.winget_manager.get_available_updates(),
+                "pending_os_updates": SystemInfo.get_pending_os_updates()
+            }
             self.api_client.send_report(report_data)
             self.last_report_time = time.time()
         except Exception as e: logging.error(f"Błąd krytyczny podczas wysyłania raportu: {e}", exc_info=True)
@@ -229,11 +244,14 @@ class Agent:
     def _schedule_task_on_logon(self, task_id, base_command, payload):
         task_name = f"WingetAgentTask_{task_id}"
         command_to_run = ""
+        # Delegujemy tworzenie zadania do pomocnika, który ma dostęp do winget
+        # ścieżka do winget jest teraz nieznana dla agenta, ale znana dla pomocnika
+        winget_executable = "winget"
 
         if base_command in ['request_update', 'force_update']:
-            command_to_run = f"& '{self.winget_manager.winget_path}' update --id '{payload}' --silent --accept-package-agreements; schtasks /Delete /TN '{task_name}' /F"
+            command_to_run = f"& '{winget_executable}' update --id '{payload}' --silent --accept-package-agreements; schtasks /Delete /TN '{task_name}' /F"
         elif base_command in ['request_uninstall', 'force_uninstall']:
-            command_to_run = f"& '{self.winget_manager.winget_path}' uninstall --id '{payload}' --silent --force; schtasks /Delete /TN '{task_name}' /F"
+            command_to_run = f"& '{winget_executable}' uninstall --id '{payload}' --silent --force; schtasks /Delete /TN '{task_name}' /F"
         elif base_command in ['request_os_update', 'force_os_update']:
             command_to_run = f"{self._get_os_update_script()}; schtasks /Delete /TN '{task_name}' /F"
         else:
@@ -255,23 +273,21 @@ class Agent:
     def _perform_action_now(self, task_id, base_command, payload):
         self.api_client.send_task_result(task_id, 'w_trakcie_wykonywania')
         final_command = ""
-        action_type_for_msg = "operacja" # Domyślna wartość
+        action_type_for_msg = "operacja"
+        winget_executable = "winget"
 
-        # --- POPRAWIONA LOGIKA ---
-        # Najpierw sprawdzamy, czy zadanie dotyczy systemu operacyjnego, niezależnie od komendy.
         if payload == 'os_update' or base_command == 'os_update':
             action_type_for_msg = "aktualizacja systemu"
             final_command = self._get_os_update_script()
         elif base_command == 'update':
             action_type_for_msg = "aktualizacja aplikacji"
-            final_command = f'& "{self.winget_manager.winget_path}" update --id "{payload}" --silent --accept-package-agreements --accept-source-agreements --disable-interactivity'
+            final_command = f'& "{winget_executable}" update --id "{payload}" --silent --accept-package-agreements --accept-source-agreements --disable-interactivity'
         elif base_command == 'uninstall':
             action_type_for_msg = "deinstalacja aplikacji"
-            final_command = f'& "{self.winget_manager.winget_path}" uninstall --id "{payload}" --silent --force --accept-source-agreements --disable-interactivity'
+            final_command = f'& "{winget_executable}" uninstall --id "{payload}" --silent --force --accept-source-agreements --disable-interactivity'
         else:
             self.api_client.send_task_result(task_id, 'błąd', f"Agent nie rozpoznał polecenia: {base_command}")
             return
-        # --- KONIEC POPRAWIONEJ LOGIKI ---
 
         response_json = UiClient.send_request({"type": "execute_command", "command": final_command})
         try:
@@ -287,7 +303,6 @@ class Agent:
                     self._schedule_task_on_logon(task_id, base_command, payload)
                 else:
                     self.api_client.send_task_result(task_id, 'niepowodzenie_interwencja_uzytkownika', details)
-                    # Poprawka: używamy poprawnego "action_type_for_msg"
                     UiClient.send_request({"type": "info", "title": "Automatyzacja nie powiodła się", "message": f"Automatyczna {action_type_for_msg} '{payload if payload != 'os_update' else ''}' nie powiodła się. Prosimy o ręczne wykonanie tej operacji."})
         except (json.JSONDecodeError, TypeError, AttributeError) as e:
             self.api_client.send_task_result(task_id, 'błąd', f"Błąd wewnętrzny agenta: {e}")
@@ -392,9 +407,7 @@ class AgentService(win32serviceutil.ServiceFramework):
             except Exception as e: logging.error(f"Nieoczekiwany błąd w pętli: {e}", exc_info=True); time.sleep(60)
 
 if __name__ == '__main__':
-    # Sprawdzamy, czy przekazano argument i czy jest to 'status'
     if len(sys.argv) > 1 and sys.argv[1].lower() == 'status':
-        # Słownik tłumaczący kody statusu na czytelne nazwy
         status_dict = {
             win32service.SERVICE_STOPPED: "Zatrzymana",
             win32service.SERVICE_START_PENDING: "Uruchamianie...",
@@ -405,21 +418,26 @@ if __name__ == '__main__':
             win32service.SERVICE_PAUSED: "Spauzowana",
         }
         try:
-            # Pytamy system o status naszej usługi
             status_info = win32serviceutil.QueryServiceStatus(AgentService._svc_name_)
-            # Wyświetlamy przetłumaczony status
             print(f"Status usługi '{AgentService._svc_display_name_}': {status_dict.get(status_info[1], 'Nieznany')}")
         except pywintypes.error as e:
-            # Obsługa błędu, gdy usługa nie jest zainstalowana (kod błędu 1060)
             if e.winerror == 1060:
                 print(f"Błąd: Usługa '{AgentService._svc_display_name_}' nie jest zainstalowana.")
             else:
                 print(f"Wystąpił nieoczekiwany błąd: {e}")
 
-    # Jeśli nie było komendy 'status', używamy standardowej obsługi
     elif len(sys.argv) == 1:
-        servicemanager.Initialize()
-        servicemanager.PrepareToHostSingle(AgentService)
-        servicemanager.StartServiceCtrlDispatcher()
+        try:
+            servicemanager.Initialize()
+            servicemanager.PrepareToHostSingle(AgentService)
+            servicemanager.StartServiceCtrlDispatcher()
+        except pywintypes.error as e:
+            if e.winerror == 1063:
+                # To jest oczekiwany błąd, gdy próbujemy uruchomić plik .exe ręcznie, a usługa już działa.
+                # Możemy go zignorować lub wyświetlić przyjazny komunikat.
+                print("Błąd: Nie można uruchomić agenta ręcznie, gdy usługa jest już aktywna.")
+                print("Użyj 'agent.exe start|stop|restart|debug|status' do zarządzania usługą.")
+            else:
+                raise
     else:
         win32serviceutil.HandleCommandLine(AgentService)
