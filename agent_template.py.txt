@@ -195,6 +195,13 @@ class Agent:
 
     def run_full_report(self):
         try:
+            # ===============================================================
+            # NOWY KROK: Automatyczna aktualizacja źródeł winget
+            # ===============================================================
+            logging.info("Aktualizowanie źródeł winget przed wygenerowaniem raportu...")
+            self.winget_manager._get_winget_data("winget source update")
+            logging.info("Zakończono aktualizację źródeł winget.")
+
             self.blacklist = self.api_client.get_blacklist(self.hostname)
             report_data = {
                 "hostname": self.hostname,
@@ -244,8 +251,6 @@ class Agent:
     def _schedule_task_on_logon(self, task_id, base_command, payload):
         task_name = f"WingetAgentTask_{task_id}"
         command_to_run = ""
-        # Delegujemy tworzenie zadania do pomocnika, który ma dostęp do winget
-        # ścieżka do winget jest teraz nieznana dla agenta, ale znana dla pomocnika
         winget_executable = "winget"
 
         if base_command in ['request_update', 'force_update']:
@@ -290,6 +295,13 @@ class Agent:
             return
 
         response_json = UiClient.send_request({"type": "execute_command", "command": final_command})
+
+        if response_json in ["no_response", "no_helper", "error"]:
+            details = "Nie można wykonać zadania, ponieważ pomocnik UI nie jest dostępny (prawdopodobnie nikt nie jest zalogowany)."
+            logging.warning(details)
+            self.api_client.send_task_result(task_id, 'niepowodzenie_brak_uzytkownika', details)
+            return
+
         try:
             response = json.loads(response_json)
             status, details = response.get('status'), response.get('details')
@@ -309,6 +321,15 @@ class Agent:
 
     def _handle_interactive_task(self, task):
         task_id, command, payload = task['id'], task['command'], task['payload']
+
+        request_data = {"type": "ping"}
+        ping_response = UiClient.send_request(request_data)
+        if ping_response in ["no_response", "no_helper", "error"]:
+            details = "Nie można wykonać zadania interaktywnego, ponieważ pomocnik UI nie jest dostępny (prawdopodobnie nikt nie jest zalogowany)."
+            logging.warning(details)
+            self.api_client.send_task_result(task_id, 'niepowodzenie_brak_uzytkownika', details)
+            return
+
         try:
             self.api_client.send_task_result(task_id, 'oczekuje_na_uzytkownika')
             if command == 'request_os_update':
@@ -433,8 +454,6 @@ if __name__ == '__main__':
             servicemanager.StartServiceCtrlDispatcher()
         except pywintypes.error as e:
             if e.winerror == 1063:
-                # To jest oczekiwany błąd, gdy próbujemy uruchomić plik .exe ręcznie, a usługa już działa.
-                # Możemy go zignorować lub wyświetlić przyjazny komunikat.
                 print("Błąd: Nie można uruchomić agenta ręcznie, gdy usługa jest już aktywna.")
                 print("Użyj 'agent.exe start|stop|restart|debug|status' do zarządzania usługą.")
             else:

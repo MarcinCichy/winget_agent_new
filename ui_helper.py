@@ -1,4 +1,4 @@
-# Plik: ui_helper.py (WERSJA FINAŁOWA z podejściem hybrydowym)
+# Plik: ui_helper.py (WERSJA FINAŁOWA z ostateczną poprawką uprawnień)
 
 import socket
 import json
@@ -40,7 +40,7 @@ def show_dialog_native(data):
             full_message = f"{message}\n\n{data.get('detail', '')}"
             result = ctypes.windll.user32.MessageBoxW(0, full_message, title, style)
             response_str = "now" if result == IDYES else "shutdown"
-        else:
+        else: # Obejmuje 'info' i każdy inny typ
             style = MB_OK | MB_ICONINFORMATION
             ctypes.windll.user32.MessageBoxW(0, message, title, style)
             response_str = "ok"
@@ -62,14 +62,9 @@ def run_command_as_user(command_str):
             timeout=1800
         )
 
-        # USUNIĘTE LINIE POWODUJĄCE BŁĄD
-        # clean_stdout = result.stdout.replace('\\', '/')
-        # clean_stderr = result.stderr.replace('\\', '/')
-
-        # Używamy teraz surowego wyniku z subprocess
         if result.returncode == 0 or "Successfully installed" in result.stdout or "successfully installed" in result.stderr:
             logging.info(f"Polecenie zakończone sukcesem. Kod wyjścia: {result.returncode}")
-            return json.dumps({"status": "success", "details": result.stdout})  # Używamy result.stdout
+            return json.dumps({"status": "success", "details": result.stdout})
         else:
             logging.error(
                 f"Polecenie nie powiodło się. Kod: {result.returncode}\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}")
@@ -86,7 +81,6 @@ def schedule_task_as_user(task_name, command_to_run, trigger_type='onlogon'):
     starter_script_path = os.path.join(temp_dir, f"{task_name}.ps1")
     log_file_path = os.path.join(temp_dir, f"{task_name}.log")
 
-    # Krok 1: Definiujemy treść naszego GŁÓWNEGO skryptu (z logowaniem, poleceniem winget itd.)
     main_script_content = f"""
 Start-Transcript -Path "{log_file_path}" -Force
 {command_to_run}
@@ -94,20 +88,18 @@ Stop-Transcript
 Remove-Item -Path "{starter_script_path}" -Force -ErrorAction SilentlyContinue
 """
     try:
-        # Krok 2: Kodujemy treść głównego skryptu do Base64
         encoded_command = base64.b64encode(main_script_content.encode('utf-16-le')).decode('ascii')
-
-        # Krok 3: Tworzymy treść dla SKRYPTU-STARTERA, który jest bardzo prosty
         starter_script_content = f"powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded_command}"
 
-        # Krok 4: Zapisujemy na dysku tylko skrypt-starter
         with open(starter_script_path, "w", encoding="utf-8") as f:
             f.write(starter_script_content)
 
-        # Krok 5: Polecenie dla Harmonogramu Zadań jest teraz bardzo krótkie i bezpieczne
         task_command = f'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{starter_script_path}"'
 
-        base_schtasks_command = ['schtasks', '/Create', '/TN', task_name, '/TR', task_command, '/F']
+        # ===============================================================
+        # OSTATECZNA POPRAWKA: Dodajemy /RU SYSTEM, aby zadanie było globalne
+        # ===============================================================
+        base_schtasks_command = ['schtasks', '/Create', '/TN', task_name, '/TR', task_command, '/F', '/RU', 'SYSTEM']
 
         if trigger_type == 'onlogon':
             final_schtasks_command = base_schtasks_command + ['/SC', 'ONLOGON', '/DELAY', '0001:00']
@@ -147,7 +139,9 @@ def handle_client(conn, addr):
         logging.info(f"Otrzymano polecenie: {data}")
         dialog_type = data.get('type')
 
-        if dialog_type in ['request', 'info']:
+        if dialog_type == 'ping': # Obsługa nowego polecenia ping
+            response_json = json.dumps({"status": "pong"})
+        elif dialog_type in ['request', 'info']:
             response_json = show_dialog_native(data)
         elif dialog_type == 'execute_command':
             response_json = run_command_as_user(data.get('command'))

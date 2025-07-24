@@ -8,6 +8,6 @@ winget_dashboard.db
 *.pyo
 *.db
 instance/
-build/
+build/*.*
 dist/
 *.spec
