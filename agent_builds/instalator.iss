@@ -2,7 +2,6 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 
-
 [Setup]
 AppName=Winget Dashboard Agent
 AppVersion=1.1.0
@@ -16,7 +15,6 @@ PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
 
 [Files]
-; !!! PAMIĘTAJ, ABY ZMIENIĆ TĘ ŚCIEŻKĘ NA TĘ DO TWOJEGO FOLDERU 'dist' !!!
 Source: "C:\Users\Administrator\PycharmProjects\winget-dashboard_new\agent_builds\agent.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "C:\Users\Administrator\PycharmProjects\winget-dashboard_new\agent_builds\ui_helper.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "C:\Users\Administrator\PycharmProjects\winget-dashboard_new\agent_builds\updater.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -27,19 +25,14 @@ Filename: "{app}\agent.exe"; Parameters: "install"; StatusMsg: "Instalowanie us�
 Filename: "sc"; Parameters: "config WingetDashboardAgent start=auto"; StatusMsg: "Konfigurowanie usługi..."; Flags: runhidden waituntilterminated
 Filename: "sc"; Parameters: "start WingetDashboardAgent"; StatusMsg: "Uruchamianie usługi..."; Flags: runhidden waituntilterminated
 
-; ===============================================================================
-; OSTATECZNA POPRAWKA: Tworzy zadanie jako użytkownik SYSTEM, co rozwiązuje problem
-; przypisywania zadania do konkretnego użytkownika (np. "PLI").
-; ===============================================================================
+; Tworzy zadanie w Harmonogramie (już działa obowiązkowo i w tle)
 Filename: "schtasks.exe"; Parameters: "/Create /TN ""Winget Dashboard UI Helper"" /TR ""'{app}\ui_helper.exe'"" /SC ONLOGON /RL HIGHEST /RU ""NT AUTHORITY\SYSTEM"" /F"; Flags: runhidden
 
-; Uruchamia pomocnika ui_helper.exe od razu po instalacji
-Filename: "{app}\ui_helper.exe"; Description: "Uruchomienie pomocnika w tle"; Flags: nowait postinstall runascurrentuser
+; POPRAWKA: Usunięto "Description", aby polecenie było obowiązkowe i niewidoczne dla użytkownika
+Filename: "{app}\ui_helper.exe"; Flags: nowait postinstall runascurrentuser
 
 [UninstallRun]
-; Usuwa zadanie z Harmonogramu Zadań
 Filename: "schtasks.exe"; Parameters: "/Delete /TN ""Winget Dashboard UI Helper"" /F"; Flags: runhidden waituntilterminated; RunOnceId: "delete_schedule_task"
-; Zatrzymuje i usuwa usługę
 Filename: "sc"; Parameters: "stop WingetDashboardAgent"; Flags: runhidden waituntilterminated; RunOnceId: "stop_service"
 Filename: "{app}\agent.exe"; Parameters: "remove"; Flags: runhidden waituntilterminated; RunOnceId: "remove_service"
 
