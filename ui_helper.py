@@ -1,4 +1,4 @@
-# Plik: ui_helper.py (WERSJA FINAŁOWA z ostateczną poprawką uprawnień)
+# Plik: ui_helper.py (z ostateczną poprawką lokalizacji logów)
 
 import socket
 import json
@@ -11,9 +11,13 @@ import tempfile
 import ctypes
 import base64
 
-# Konfiguracja logowania
-LOG_DIR = os.path.join(os.environ.get('ProgramData'), "WingetAgent")
+# ===============================================================
+# POPRAWKA: Zmiana lokalizacji logów na folder użytkownika (%LOCALAPPDATA%)
+# ===============================================================
+LOG_DIR = os.path.join(os.environ.get('LOCALAPPDATA'), "WingetAgent")
 LOG_FILE = os.path.join(LOG_DIR, "ui_helper.log")
+# ===============================================================
+
 os.makedirs(LOG_DIR, exist_ok=True)
 logging.basicConfig(filename=LOG_FILE, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -40,7 +44,7 @@ def show_dialog_native(data):
             full_message = f"{message}\n\n{data.get('detail', '')}"
             result = ctypes.windll.user32.MessageBoxW(0, full_message, title, style)
             response_str = "now" if result == IDYES else "shutdown"
-        else: # Obejmuje 'info' i każdy inny typ
+        else:  # Obejmuje 'info' i każdy inny typ
             style = MB_OK | MB_ICONINFORMATION
             ctypes.windll.user32.MessageBoxW(0, message, title, style)
             response_str = "ok"
@@ -96,15 +100,12 @@ Remove-Item -Path "{starter_script_path}" -Force -ErrorAction SilentlyContinue
 
         task_command = f'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{starter_script_path}"'
 
-        # ===============================================================
-        # OSTATECZNA POPRAWKA: Dodajemy /RU SYSTEM, aby zadanie było globalne
-        # ===============================================================
-        base_schtasks_command = ['schtasks', '/Create', '/TN', task_name, '/TR', task_command, '/F', '/RU', 'SYSTEM']
+        base_schtasks_command = ['schtasks', '/Create', '/TN', task_name, '/TR', task_command, '/F']
 
         if trigger_type == 'onlogon':
-            final_schtasks_command = base_schtasks_command + ['/SC', 'ONLOGON', '/DELAY', '0001:00']
+            final_schtasks_command = base_schtasks_command + ['/SC', 'ONLOGON', '/DELAY', '0001:00', '/RL', 'HIGHEST']
         else:
-            final_schtasks_command = base_schtasks_command + ['/SC', 'ONLOGON', '/DELAY', '0001:00']
+            final_schtasks_command = base_schtasks_command + ['/SC', 'ONLOGON', '/DELAY', '0001:00', '/RL', 'HIGHEST']
 
         result = subprocess.run(
             final_schtasks_command,
@@ -116,7 +117,8 @@ Remove-Item -Path "{starter_script_path}" -Force -ErrorAction SilentlyContinue
             return json.dumps({"status": "success", "details": f"Zadanie '{task_name}' zostało poprawnie zaplanowane."})
         else:
             error_msg = result.stdout or result.stderr
-            logging.error(f"Nie udało się zaplanować zadania '{task_name}'. Kod: {result.returncode}\nBłąd: {error_msg}")
+            logging.error(
+                f"Nie udało się zaplanować zadania '{task_name}'. Kod: {result.returncode}\nBłąd: {error_msg}")
             return json.dumps({"status": "failure", "details": error_msg})
     except Exception as e:
         logging.error(f"Krytyczny błąd podczas planowania zadania: {e}", exc_info=True)
@@ -139,7 +141,7 @@ def handle_client(conn, addr):
         logging.info(f"Otrzymano polecenie: {data}")
         dialog_type = data.get('type')
 
-        if dialog_type == 'ping': # Obsługa nowego polecenia ping
+        if dialog_type == 'ping':
             response_json = json.dumps({"status": "pong"})
         elif dialog_type in ['request', 'info']:
             response_json = show_dialog_native(data)
