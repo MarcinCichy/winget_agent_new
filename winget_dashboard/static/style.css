@@ -360,3 +360,78 @@ html.dark-mode #theme-toggle .moon-icon { display: none; }
     color: var(--kolor-tekstu);
     opacity: 0.7;
 }
+
+/* === NOWE STYLE DLA WIDOKU KAFELKOWEGO === */
+
+.computer-grid {
+    display: grid;
+    /* Tworzy elastyczne kolumny: dopasowuje ich ilość do szerokości ekranu,
+       każda ma minimum 320px szerokości, a nadmiarowe miejsce jest równo dzielone. */
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 1.5rem; /* Odstęp między kafelkami */
+    padding-top: 1rem;
+}
+
+.computer-tile {
+    background-color: var(--kolor-tabeli-tlo);
+    border-radius: 8px;
+    box-shadow: 0 2px 5px var(--kolor-cienia);
+    display: flex;
+    flex-direction: column; /* Układa elementy jeden pod drugim */
+    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+
+.computer-tile:hover {
+    transform: translateY(-5px); /* Lekkie uniesienie kafelka */
+    box-shadow: 0 4px 10px var(--kolor-cienia);
+}
+
+.tile-main-link {
+    text-decoration: none;
+    color: inherit; /* Dziedziczy kolor tekstu z rodzica */
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1; /* Sprawia, że link wypełnia całą dostępną przestrzeń */
+    padding: 1rem;
+}
+
+.tile-header {
+    border-bottom: 1px solid var(--kolor-tabeli-ramka);
+    padding-bottom: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.tile-hostname {
+    margin: 0;
+    font-size: 1.25em;
+    word-break: break-all;
+}
+
+.tile-ip {
+    margin: 0;
+    font-size: 0.9em;
+    color: #888;
+}
+
+html.dark-mode .tile-ip {
+    color: #aaa;
+}
+
+.tile-body {
+    flex-grow: 1; /* Wypycha przyciski na dół */
+}
+
+.tile-info {
+    display: flex;
+    justify-content: space-between; /* Klucz po lewej, wartość po prawej */
+    margin-bottom: 0.5rem;
+    font-size: 0.9em;
+}
+
+.tile-actions {
+    display: flex;
+    gap: 10px;
+    padding: 1rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--kolor-tabeli-ramka);
+}

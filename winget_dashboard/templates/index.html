@@ -7,55 +7,52 @@
     <button id="refresh-all-btn" class="action-btn refresh-btn">Odśwież wszystkie</button>
 {% endblock %}
 {% block content %}
-    <table>
-        <thead style="background-color: #007bff;">
-            <tr>
-                <th>Nazwa hosta</th>
-                <th>Adres IP</th>
-                <th>Wersja Agenta</th>
-                <th>Status Agenta</th>
-                <th>Status Systemu</th>
-                <th>Ostatni raport</th>
-                <th>Akcje</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for computer in computers %}
-            <tr>
-                <td><a href="{{ url_for('views.computer_details', hostname=computer.hostname) }}">{{ computer.hostname }}</a></td>
-                <td>{{ computer.ip_address }}</td>
-                <td>{{ computer.agent_version or 'Brak danych' }}</td>
-                <td>
-                    {% if computer.last_agent_update_status == 'błąd' %}
-                        <span class="status-fail" title="Data błędu: {{ computer.last_agent_update_ts | to_local_time }}">Błąd aktualizacji</span>
-                    {% elif server_agent_info and computer.agent_version == server_agent_info.version %}
-                        <span class="status-ok">Aktualny</span>
-                    {% elif computer.agent_version %}
-                        <span class="status-pending">Nieaktualny</span>
-                    {% else %}
-                        <span>Brak danych</span>
-                    {% endif %}
-                </td>
-                <td>
-                    {% if computer.reboot_required %}
-                        <span class="status-pending">Wymagany restart</span>
-                    {% else %}
-                        <span class="status-ok">OK</span>
-                    {% endif %}
-                </td>
-                <td>{{ computer.last_report | to_local_time }}</td>
-                <td>
-                    <div class="actions-cell">
-                        <a href="{{ url_for('views.report_single', computer_id=computer.id) }}" class="action-btn btn-report">Generuj raport</a>
-                        <button class="action-btn refresh-btn" data-computer-id="{{ computer.id }}">Odśwież</button>
+    <div class="computer-grid">
+        {% for computer in computers %}
+            <div class="computer-tile">
+                <a href="{{ url_for('views.computer_details', hostname=computer.hostname) }}" class="tile-main-link">
+                    <div class="tile-header">
+                        <h3 class="tile-hostname">{{ computer.hostname }}</h3>
+                        <p class="tile-ip">{{ computer.ip_address }}</p>
                     </div>
-                </td>
-            </tr>
-            {% else %}
-            <tr>
-                <td colspan="7">Brak komputerów w bazie danych. Oczekiwanie na pierwszy raport...</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+                    <div class="tile-body">
+                        <div class="tile-info">
+                            <strong>Wersja Agenta:</strong>
+                            <span>{{ computer.agent_version or 'Brak danych' }}</span>
+                        </div>
+                        <div class="tile-info">
+                            <strong>Status Agenta:</strong>
+                            {% if computer.last_agent_update_status == 'błąd' %}
+                                <span class="status-fail" title="Data błędu: {{ computer.last_agent_update_ts | to_local_time }}">Błąd aktualizacji</span>
+                            {% elif server_agent_info and computer.agent_version == server_agent_info.version %}
+                                <span class="status-ok">Aktualny</span>
+                            {% elif computer.agent_version %}
+                                <span class="status-pending">Nieaktualny</span>
+                            {% else %}
+                                <span>Brak danych</span>
+                            {% endif %}
+                        </div>
+                        <div class="tile-info">
+                            <strong>Status Systemu:</strong>
+                             {% if computer.reboot_required %}
+                                <span class="status-pending">Wymagany restart</span>
+                            {% else %}
+                                <span class="status-ok">OK</span>
+                            {% endif %}
+                        </div>
+                        <div class="tile-info">
+                            <strong>Ostatni raport:</strong>
+                            <span>{{ computer.last_report | to_local_time }}</span>
+                        </div>
+                    </div>
+                </a>
+                <div class="tile-actions">
+                    <a href="{{ url_for('views.report_single', computer_id=computer.id) }}" class="action-btn btn-report">Generuj raport</a>
+                    <button class="action-btn refresh-btn" data-computer-id="{{ computer.id }}">Odśwież</button>
+                </div>
+            </div>
+        {% else %}
+            <p>Brak komputerów w bazie danych. Oczekiwanie na pierwszy raport...</p>
+        {% endfor %}
+    </div>
 {% endblock %}
