@@ -1,4 +1,3 @@
-# winget_dashboard/config.py
 import os
 from dotenv import load_dotenv
 
@@ -11,8 +10,6 @@ class Config:
     SECRET_KEY = os.environ.get('SECRET_KEY')
     API_KEY = os.environ.get('API_KEY')
 
-    # WRACAMY DO TEJ METODY: Ustaw tutaj wersję agenta, która jest obecnie na serwerze.
-    # Zmieniaj ją ręcznie po wgraniu nowego pliku agent.exe
     AGENT_VERSION = "1.1.0"
 
     DATABASE = os.path.join(os.path.dirname(basedir), 'instance', 'winget_dashboard.db')
@@ -34,6 +31,4 @@ vcredist
 """
     AGENT_TEMPLATE_PATH = os.path.join(basedir, "..", "agent_template.py.txt")
 
-    # NOWA ZMIENNA: Czas w sekundach, po którym agent jest uznawany za offline
-    # Domyślnie 2.5 godziny (9000 sekund)
-    AGENT_OFFLINE_THRESHOLD = 600
+    AGENT_OFFLINE_THRESHOLD = 900

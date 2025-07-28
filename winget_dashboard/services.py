@@ -32,11 +32,9 @@ class AgentVersionService:
         current_version = self.get_server_agent_version()
         parts = current_version.split('.')
         try:
-            # Inkrementuj ostatnią część numeru wersji
             parts[-1] = str(int(parts[-1]) + 1)
             return ".".join(parts)
         except (ValueError, IndexError):
-            # Jeśli obecny format jest niepoprawny, zasugeruj wersję bazową
             return "1.0.1"
 
     def set_server_agent_version(self, new_version: str):
@@ -132,15 +130,7 @@ class ReportGenerator:
         hostname, ip_address = report_info['hostname'], report_info['ip_address']
         content = [f"# RAPORT DLA KOMPUTERA: {hostname} ({ip_address})"]
 
-        # ===============================================================
-        # OSTATECZNA POPRAWKA: Bezpieczne sprawdzanie, która data jest dostępna
-        # ===============================================================
-        report_time = None
-        if 'report_timestamp' in report_info.keys():
-            report_time = report_info['report_timestamp']
-        elif 'last_report' in report_info.keys():
-            report_time = report_info['last_report']
-
+        report_time = report_info.get('report_timestamp') or report_info.get('last_report')
         content.append(f"Data raportu: {self._to_local_time(report_time)}")
         content.append(
             f"Data wygenerowania pliku: {datetime.now(ZoneInfo('Europe/Warsaw')).strftime('%Y-%m-%d %H:%M:%S')}\n")

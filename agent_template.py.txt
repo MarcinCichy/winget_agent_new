@@ -21,6 +21,7 @@ API_KEY = "__API_KEY__"
 AGENT_VERSION = "__AGENT_VERSION__"
 LOOP_INTERVAL = int("__LOOP_INTERVAL__")
 REPORT_INTERVAL = int("__REPORT_INTERVAL__")
+LIGHT_REPORT_INTERVAL = 300  # 5 minut
 WINGET_PATH_CONF = r"__WINGET_PATH__"
 
 # --- Klasy logiki ---
@@ -191,13 +192,31 @@ class Agent:
         self.winget_manager = WingetManager(WINGET_PATH_CONF)
         self.version = AGENT_VERSION
         self.blacklist = []
-        self.last_report_time = 0
+        self.last_full_report_time = 0
+        self.last_light_report_time = 0
+
+    def run_light_report(self):
+        """Wysyła szybki raport tylko z podstawowymi danymi w celu odświeżenia statusu online."""
+        try:
+            logging.info("Wysyłanie lekkiego raportu (status online)...")
+            report_data = {
+                "hostname": self.hostname,
+                "ip_address": SystemInfo.get_active_ip(),
+                "agent_version": self.version,
+                "reboot_required": SystemInfo.is_reboot_required(),
+                "installed_apps": [],
+                "available_app_updates": [],
+                "pending_os_updates": []
+            }
+            self.api_client.send_report(report_data)
+            self.last_light_report_time = time.time()
+        except Exception as e:
+            logging.error(f"Błąd podczas wysyłania lekkiego raportu: {e}")
 
     def run_full_report(self):
+        """Wysyła pełny, czasochłonny raport ze wszystkimi danymi."""
         try:
-            # ===============================================================
-            # NOWY KROK: Automatyczna aktualizacja źródeł winget
-            # ===============================================================
+            logging.info("Rozpoczynanie pełnego raportu...")
             logging.info("Aktualizowanie źródeł winget przed wygenerowaniem raportu...")
             self.winget_manager._get_winget_data("winget source update")
             logging.info("Zakończono aktualizację źródeł winget.")
@@ -213,8 +232,10 @@ class Agent:
                 "pending_os_updates": SystemInfo.get_pending_os_updates()
             }
             self.api_client.send_report(report_data)
-            self.last_report_time = time.time()
-        except Exception as e: logging.error(f"Błąd krytyczny podczas wysyłania raportu: {e}", exc_info=True)
+            self.last_full_report_time = time.time()
+            self.last_light_report_time = self.last_full_report_time
+        except Exception as e:
+            logging.error(f"Błąd krytyczny podczas wysyłania pełnego raportu: {e}", exc_info=True)
 
     def _get_os_update_script(self):
         return """
@@ -415,17 +436,38 @@ class AgentService(win32serviceutil.ServiceFramework):
     def SvcDoRun(self):
         self._setup_logging()
         servicemanager.LogMsg(servicemanager.EVENTLOG_INFORMATION_TYPE, servicemanager.PYS_SERVICE_STARTED, (self._svc_name_, ''))
-        try: self.agent = Agent(); self.main_loop(self)
-        except Exception as e: logging.critical(f"Krytyczny błąd uniemożliwiający uruchomienie: {e}", exc_info=True); self.SvcStop()
+        try:
+            self.agent = Agent()
+            self.main_loop(self)
+        except Exception as e:
+            logging.critical(f"Krytyczny błąd uniemożliwiający uruchomienie: {e}", exc_info=True)
+            self.SvcStop()
+
     def main_loop(self, service_framework):
-        try: self.agent.run_full_report()
-        except Exception as e: logging.error(f"Błąd podczas początkowego raportu: {e}")
+        try:
+            # Wyślij pierwszy lekki raport natychmiast, aby pokazać status online
+            self.agent.run_light_report()
+            # Uruchom pierwszy pełny raport w tle, aby nie blokować startu usługi
+            logging.info("Uruchamianie początkowego pełnego raportu w tle...")
+            initial_full_report_thread = threading.Thread(target=self.agent.run_full_report, daemon=True)
+            initial_full_report_thread.start()
+        except Exception as e:
+            logging.error(f"Błąd podczas raportów startowych: {e}")
+
         while self.is_running:
-            if win32event.WaitForSingleObject(self.hWaitStop, LOOP_INTERVAL * 1000) == win32event.WAIT_OBJECT_0: break
+            if win32event.WaitForSingleObject(self.hWaitStop, LOOP_INTERVAL * 1000) == win32event.WAIT_OBJECT_0:
+                break
             try:
+                now = time.time()
                 self.agent.check_and_execute_tasks(service_framework)
-                if (time.time() - self.agent.last_report_time) >= REPORT_INTERVAL: self.agent.run_full_report()
-            except Exception as e: logging.error(f"Nieoczekiwany błąd w pętli: {e}", exc_info=True); time.sleep(60)
+
+                if (now - self.agent.last_full_report_time) >= REPORT_INTERVAL:
+                    self.agent.run_full_report()
+                elif (now - self.agent.last_light_report_time) >= LIGHT_REPORT_INTERVAL:
+                    self.agent.run_light_report()
+            except Exception as e:
+                logging.error(f"Nieoczekiwany błąd w pętli: {e}", exc_info=True)
+                time.sleep(60)
 
 if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1].lower() == 'status':
