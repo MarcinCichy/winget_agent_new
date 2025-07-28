@@ -33,3 +33,7 @@ store
 vcredist
 """
     AGENT_TEMPLATE_PATH = os.path.join(basedir, "..", "agent_template.py.txt")
+
+    # NOWA ZMIENNA: Czas w sekundach, po którym agent jest uznawany za offline
+    # Domyślnie 2.5 godziny (9000 sekund)
+    AGENT_OFFLINE_THRESHOLD = 600

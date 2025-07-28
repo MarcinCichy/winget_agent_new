@@ -22,15 +22,19 @@
                         </div>
                         <div class="tile-info">
                             <strong>Status Agenta:</strong>
-                            {% if computer.last_agent_update_status == 'błąd' %}
-                                <span class="status-fail" title="Data błędu: {{ computer.last_agent_update_ts | to_local_time }}">Błąd aktualizacji</span>
-                            {% elif server_agent_info and computer.agent_version == server_agent_info.version %}
-                                <span class="status-ok">Aktualny</span>
-                            {% elif computer.agent_version %}
-                                <span class="status-pending">Nieaktualny</span>
-                            {% else %}
-                                <span>Brak danych</span>
-                            {% endif %}
+                            <span>
+                                {% if computer.is_offline %}
+                                    <span class="status-offline">Niedostępny</span>
+                                {% elif computer.last_agent_update_status == 'błąd' %}
+                                    <span class="status-fail" title="Data błędu: {{ computer.last_agent_update_ts | to_local_time }}">Błąd aktualizacji</span>
+                                {% elif server_agent_info and computer.agent_version == server_agent_info.version %}
+                                    <span class="status-ok">Aktualny</span>
+                                {% elif computer.agent_version %}
+                                    <span class="status-pending">Nieaktualny</span>
+                                {% else %}
+                                    <span>Brak danych</span>
+                                {% endif %}
+                            </span>
                         </div>
                         <div class="tile-info">
                             <strong>Status Systemu:</strong>

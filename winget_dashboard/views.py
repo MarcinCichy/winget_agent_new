@@ -4,7 +4,8 @@ import shutil
 import io
 from flask import (Blueprint, render_template, current_app, send_file, request, flash, redirect, url_for, abort,
                    Response, after_this_request)
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from .db import DatabaseManager
 from .services import AgentGenerator, ReportGenerator, AgentVersionService
 
@@ -14,9 +15,37 @@ bp = Blueprint('views', __name__)
 @bp.route('/')
 def index():
     db_manager = DatabaseManager()
-    computers = db_manager.get_all_computers()
+    computers_raw = db_manager.get_all_computers()
     version_service = AgentVersionService()
     server_agent_info = version_service.get_server_agent_info()
+
+    # Pobieramy próg offline z konfiguracji
+    offline_threshold = current_app.config['AGENT_OFFLINE_THRESHOLD']
+    now_utc = datetime.now(timezone.utc)
+
+    computers = []
+    for computer_row in computers_raw:
+        computer = dict(computer_row)  # Konwertujemy na słownik, aby dodać nowe pole
+        computer['is_offline'] = False
+
+        last_report_str = computer.get('last_report')
+        if last_report_str:
+            try:
+                # Konwertujemy czas ostatniego raportu na obiekt datetime świadomy strefy czasowej
+                last_report_dt = datetime.fromisoformat(last_report_str).replace(tzinfo=timezone.utc)
+                seconds_since_report = (now_utc - last_report_dt).total_seconds()
+
+                if seconds_since_report > offline_threshold:
+                    computer['is_offline'] = True
+            except (ValueError, TypeError):
+                # Jeśli data jest w złym formacie, traktujemy to jako błąd, ale nie offline
+                pass
+        else:
+            # Jeśli nigdy nie było raportu, uznajemy za offline
+            computer['is_offline'] = True
+
+        computers.append(computer)
+
     return render_template('index.html', computers=computers, server_agent_info=server_agent_info)
 
 

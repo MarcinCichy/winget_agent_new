@@ -149,6 +149,7 @@ tbody tr:hover { background-color: var(--kolor-tla-hover); }
 .status-ok { color: #28a745; font-weight: bold; }
 .status-pending { color: #ffc107; font-weight: bold; }
 .status-fail { color: #dc3545; font-weight: bold; }
+.status-offline { color: #888; font-weight: bold; font-style: italic; }
 #notification-bar {
     padding: 1rem;
     margin-bottom: 1rem;
@@ -360,7 +361,6 @@ html.dark-mode #theme-toggle .moon-icon { display: none; }
     color: var(--kolor-tekstu);
     opacity: 0.7;
 }
-
 /* === NOWE STYLE DLA WIDOKU KAFELKOWEGO === */
 
 .computer-grid {
