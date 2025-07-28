@@ -373,12 +373,13 @@ html.dark-mode #theme-toggle .moon-icon { display: none; }
 }
 
 .computer-tile {
+    position: relative; /* Potrzebne do pozycjonowania przycisku usuwania */
     background-color: var(--kolor-tabeli-tlo);
     border-radius: 8px;
     box-shadow: 0 2px 5px var(--kolor-cienia);
     display: flex;
     flex-direction: column; /* Układa elementy jeden pod drugim */
-    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+    transition: transform 0.3s ease-in-out, box-shadow 0.2s ease-in-out;
 }
 
 .computer-tile:hover {
@@ -434,4 +435,28 @@ html.dark-mode .tile-ip {
     padding: 1rem;
     padding-top: 0.5rem;
     border-top: 1px solid var(--kolor-tabeli-ramka);
+}
+
+/* === NOWE STYLE DLA PRZYCISKU USUWANIA === */
+
+.delete-computer-btn {
+    position: absolute;
+    top: 5px;
+    right: 8px;
+    z-index: 10;
+    background: none;
+    border: none;
+    color: var(--kolor-tekstu);
+    opacity: 0.4;
+    font-size: 24px;
+    font-weight: bold;
+    line-height: 1;
+    cursor: pointer;
+    padding: 5px;
+    transition: opacity 0.2s;
+}
+
+.delete-computer-btn:hover {
+    opacity: 1;
+    color: var(--kolor-bledu);
 }

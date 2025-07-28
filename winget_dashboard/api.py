@@ -224,3 +224,15 @@ def deploy_update_to_all():
     message = f"Pomyślnie zlecono zadanie aktualizacji dla {tasks_created_count} komputerów."
     current_app.logger.info(message)
     return jsonify({"status": "success", "message": message, "count": tasks_created_count})
+
+
+@bp.route('/computer/<int:computer_id>', methods=['DELETE'])
+def delete_computer(computer_id):
+    db_manager = DatabaseManager()
+    computer = db_manager.get_computer_details_by_id(computer_id)
+    if not computer:
+        return jsonify({"status": "error", "message": "Nie znaleziono komputera"}), 404
+
+    db_manager.delete_computer(computer_id)
+    flash(f"Pomyślnie usunięto komputer '{computer['computer']['hostname']}'.", 'success')
+    return jsonify({"status": "success", "message": "Komputer usunięty pomyślnie"})

@@ -265,3 +265,8 @@ class DatabaseManager:
     def get_task_status(self, task_id):
         result = self._execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
         return result['status'] if result else None
+
+    def delete_computer(self, computer_id):
+        """Trwale usuwa komputer i wszystkie powiązane z nim dane."""
+        self._execute("DELETE FROM computers WHERE id = ?", (computer_id,), commit=True)
+        logging.info(f"Usunięto komputer o ID: {computer_id}")

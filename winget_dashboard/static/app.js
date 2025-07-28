@@ -388,4 +388,37 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
         });
     }
+
+    // Logika dla przycisku usuwania komputera
+    document.querySelectorAll('.delete-computer-btn').forEach(button => {
+        button.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const computerId = this.dataset.computerId;
+            const hostname = this.dataset.hostname;
+
+            if (confirm(`Czy na pewno chcesz trwale usunąć komputer "${hostname}" i całą jego historię? Tej akcji nie można cofnąć.`)) {
+                fetch(`/api/computer/${computerId}`, {
+                    method: 'DELETE'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        // Zamiast przeładowywać, płynnie usuń kafelek
+                        this.closest('.computer-tile').style.transform = 'scale(0)';
+                        setTimeout(() => {
+                           this.closest('.computer-tile').remove();
+                        }, 300);
+                    } else {
+                        alert('Wystąpił błąd podczas usuwania komputera: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Błąd:', error);
+                    alert('Wystąpił krytyczny błąd sieci.');
+                });
+            }
+        });
+    });
 });

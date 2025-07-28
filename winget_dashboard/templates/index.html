@@ -10,6 +10,7 @@
     <div class="computer-grid">
         {% for computer in computers %}
             <div class="computer-tile">
+                <button class="delete-computer-btn" data-computer-id="{{ computer.id }}" data-hostname="{{ computer.hostname }}" title="Usuń ten komputer">&times;</button>
                 <a href="{{ url_for('views.computer_details', hostname=computer.hostname) }}" class="tile-main-link">
                     <div class="tile-header">
                         <h3 class="tile-hostname">{{ computer.hostname }}</h3>
