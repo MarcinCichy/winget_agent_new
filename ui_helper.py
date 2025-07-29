@@ -1,4 +1,4 @@
-# Plik: ui_helper.py (z ostateczną poprawką lokalizacji logów)
+# Plik: ui_helper.py (Finalna, poprawiona wersja)
 
 import socket
 import json
@@ -12,7 +12,7 @@ import ctypes
 import base64
 
 # ===============================================================
-# POPRAWKA: Zmiana lokalizacji logów na folder użytkownika (%LOCALAPPDATA%)
+# Lokalizacja logów w folderze użytkownika (%LOCALAPPDATA%)
 # ===============================================================
 LOG_DIR = os.path.join(os.environ.get('LOCALAPPDATA'), "WingetAgent")
 LOG_FILE = os.path.join(LOG_DIR, "ui_helper.log")
@@ -55,10 +55,34 @@ def show_dialog_native(data):
         return json.dumps({"status": "error", "details": str(e)})
 
 
-def run_command_as_user(command_str):
-    logging.info(f"Otrzymano prośbę o wykonanie polecenia: {command_str}")
+def get_winget_path() -> str:
+    """Zwraca absolutną ścieżkę do winget.exe lub 'winget', jeśli nie zostanie znaleziona."""
     try:
-        full_command = f"$ProgressPreference = 'SilentlyContinue'; [System.Threading.Thread]::CurrentThread.CurrentUICulture = 'en-US'; {command_str}"
+        local_app_data = os.environ.get('LOCALAPPDATA')
+        if local_app_data:
+            potential_path = os.path.join(local_app_data, 'Microsoft', 'WindowsApps', 'winget.exe')
+            if os.path.exists(potential_path):
+                logging.info(f"Znaleziono winget.exe w: {potential_path}")
+                return f'"{potential_path}"'
+    except Exception as e:
+        logging.error(f"Błąd podczas wyszukiwania winget.exe: {e}")
+
+    logging.warning("Nie znaleziono winget.exe w standardowej lokalizacji, poleganie na zmiennej PATH.")
+    return 'winget'
+
+
+def run_command_as_user(command_str):
+    """Wykonuje polecenie w PowerShell z poprawną obsługą ścieżek."""
+    winget_executable = get_winget_path()
+    command_with_full_path = command_str.replace('winget', winget_executable, 1)
+
+    logging.info(f"Otrzymano prośbę o wykonanie polecenia: {command_str}")
+    logging.info(f"Polecenie po przetworzeniu ścieżki: {command_with_full_path}")
+
+    try:
+        # POPRAWKA: Dodano operator wywołania '&' przed poleceniem
+        full_command = f"$ProgressPreference = 'SilentlyContinue'; [System.Threading.Thread]::CurrentThread.CurrentUICulture = 'en-US'; & {command_with_full_path}"
+
         result = subprocess.run(
             ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", full_command],
             capture_output=True, text=True, encoding='utf-8', errors='ignore',

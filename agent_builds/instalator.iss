@@ -2,6 +2,10 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 
+; =================================================================
+; Finalny skrypt instalatora - Wersja z programowym uruchomieniem ui_helper
+; =================================================================
+
 [Setup]
 AppName=Winget Dashboard Agent
 AppVersion=1.1.0
@@ -19,17 +23,61 @@ Source: "C:\Users\Administrator\PycharmProjects\winget-dashboard_new\agent_build
 Source: "C:\Users\Administrator\PycharmProjects\winget-dashboard_new\agent_builds\ui_helper.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "C:\Users\Administrator\PycharmProjects\winget-dashboard_new\agent_builds\updater.exe"; DestDir: "{app}"; Flags: ignoreversion
 
+[Code]
+// Uruchamia się na początku, czyści środowisko przed instalacją
+function InitializeSetup(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Exec('sc.exe', 'stop WingetDashboardAgent', '', SW_HIDE, ewNoWait, ResultCode);
+  Exec('sc.exe', 'delete WingetDashboardAgent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('taskkill.exe', '/F /IM ui_helper.exe', '', SW_HIDE, ewNoWait, ResultCode);
+  Exec('schtasks.exe', '/Delete /TN "Winget Dashboard UI Helper" /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Result := True;
+end;
+
+// Uruchamia się przed kopiowaniem plików, aby bezpiecznie usunąć stary folder
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  AppPath: String;
+begin
+  if CurStep = ssInstall then
+  begin
+    AppPath := ExpandConstant('{app}');
+    if DirExists(AppPath) then
+    begin
+      DelTree(AppPath, True, True, True);
+    end;
+  end;
+end;
+
+// Uruchamia się na samym końcu instalacji, tuż przed pokazaniem ostatniego okna
+procedure DeinitializeSetup();
+var
+  ResultCode: Integer;
+  AppFileName: String;
+begin
+  AppFileName := ExpandConstant('{app}\ui_helper.exe');
+  // Używamy Exec, aby uruchomić pomocnika w tle, z uprawnieniami użytkownika,
+  // który uruchomił instalator (w tym przypadku admina).
+  Exec(AppFileName, '', '', SW_HIDE, ewNoWait, ResultCode);
+end;
+
 [Run]
-; Instaluje i uruchamia usługę systemową agent.exe
+; --- Sekcja [Run] jest teraz czystsza. Problem z ui_helper.exe został przeniesiony do sekcji [Code] ---
+
+; Krok 1: Instalacja usługi
 Filename: "{app}\agent.exe"; Parameters: "install"; StatusMsg: "Instalowanie usługi..."; Flags: runhidden waituntilterminated
 Filename: "sc"; Parameters: "config WingetDashboardAgent start=auto"; StatusMsg: "Konfigurowanie usługi..."; Flags: runhidden waituntilterminated
 Filename: "sc"; Parameters: "start WingetDashboardAgent"; StatusMsg: "Uruchamianie usługi..."; Flags: runhidden waituntilterminated
 
-; Tworzy zadanie w Harmonogramie (już działa obowiązkowo i w tle)
-Filename: "schtasks.exe"; Parameters: "/Create /TN ""Winget Dashboard UI Helper"" /TR ""'{app}\ui_helper.exe'"" /SC ONLOGON /RL HIGHEST /RU ""NT AUTHORITY\SYSTEM"" /F"; Flags: runhidden
+; Krok 2: Utworzenie zadania w Harmonogramie
+Filename: "schtasks.exe"; Parameters: "/Create /TN ""Winget Dashboard UI Helper"" /TR ""'{app}\ui_helper.exe'"" /SC ONLOGON /RL HIGHEST /F"; Flags: runhidden
 
-; POPRAWKA: Usunięto "Description", aby polecenie było obowiązkowe i niewidoczne dla użytkownika
-Filename: "{app}\ui_helper.exe"; Flags: nowait postinstall runascurrentuser
+; Krok 3: Dodanie wyjątku w Windows Defender
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Add-MpPreference -ExclusionPath '{app}'"""; StatusMsg: "Konfigurowanie wyjątków w zabezpieczeniach..."; Flags: runhidden
+
+; UWAGA: Linia uruchamiająca ui_helper.exe została usunięta stąd i przeniesiona do sekcji [Code]
 
 [UninstallRun]
 Filename: "schtasks.exe"; Parameters: "/Delete /TN ""Winget Dashboard UI Helper"" /F"; Flags: runhidden waituntilterminated; RunOnceId: "delete_schedule_task"
