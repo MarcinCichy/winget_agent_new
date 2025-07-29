@@ -65,6 +65,18 @@ def task_result():
     return "Result received", 200
 
 
+@bp.route('/agent/heartbeat', methods=['POST'])
+@require_api_key
+def agent_heartbeat():
+    data = request.get_json()
+    if not data or 'hostname' not in data:
+        return "Bad Request", 400
+
+    db_manager = DatabaseManager()
+    db_manager.update_computer_status_from_heartbeat(data)
+    return "Heartbeat received", 200
+
+
 @bp.route('/settings/blacklist/<hostname>', methods=['GET'])
 @require_api_key
 def get_blacklist(hostname):
@@ -129,6 +141,37 @@ def request_os_update(computer_id):
     return jsonify({"status": "success", "message": f"Zadanie ({command}) zlecone", "task_id": task_id})
 
 
+@bp.route('/computer/<int:computer_id>/update_all', methods=['POST'])
+def request_update_all(computer_id):
+    db_manager = DatabaseManager()
+    updates = db_manager.get_pending_updates_for_computer(computer_id)
+
+    if not updates:
+        return jsonify({"status": "no_updates", "message": "Brak oczekujących aktualizacji do zlecenia."})
+
+    tasks_created_count = 0
+    os_update_created = False
+    for update in updates:
+        if update['update_type'] == 'APP':
+            db_manager.create_task(
+                computer_id=computer_id,
+                command='request_update',
+                payload=update['app_id']
+            )
+            tasks_created_count += 1
+        elif update['update_type'] == 'OS' and not os_update_created:
+            db_manager.create_task(
+                computer_id=computer_id,
+                command='request_os_update',
+                payload='os_update'
+            )
+            tasks_created_count += 1
+            os_update_created = True
+
+    return jsonify({"status": "success", "message": f"Zlecono {tasks_created_count} zadań aktualizacji.",
+                    "count": tasks_created_count})
+
+
 @bp.route('/computer/<int:computer_id>/blacklist', methods=['POST'])
 def update_blacklist(computer_id):
     data = request.get_json()
@@ -179,7 +222,6 @@ def request_agent_update(computer_id):
 
 @bp.route('/agent/update_status', methods=['POST'])
 def agent_update_status():
-    """Endpoint wywoływany przez updater.py po próbie aktualizacji."""
     data = request.get_json()
     hostname, status = data.get('hostname'), data.get('status')
     if not hostname or not status:

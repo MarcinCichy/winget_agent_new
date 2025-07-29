@@ -103,6 +103,7 @@ class ApiClient:
     def send_task_result(self, task_id, status, details=None):
         payload = {'task_id': task_id, 'status': status, 'details': details}
         self._request('post', '/api/tasks/result', data=json.dumps(payload))
+    def send_heartbeat(self, data): self._request('post', '/api/agent/heartbeat', data=json.dumps(data))
 
 class WingetManager:
     def __init__(self, winget_path_conf=""):
@@ -195,23 +196,20 @@ class Agent:
         self.last_full_report_time = 0
         self.last_light_report_time = 0
 
-    def run_light_report(self):
-        """Wysyła szybki raport tylko z podstawowymi danymi w celu odświeżenia statusu online."""
+    def send_heartbeat(self):
+        """Wysyła szybki sygnał 'heartbeat' w celu odświeżenia statusu online."""
         try:
-            logging.info("Wysyłanie lekkiego raportu (status online)...")
-            report_data = {
+            logging.info("Wysyłanie sygnału heartbeat (status online)...")
+            heartbeat_data = {
                 "hostname": self.hostname,
                 "ip_address": SystemInfo.get_active_ip(),
                 "agent_version": self.version,
-                "reboot_required": SystemInfo.is_reboot_required(),
-                "installed_apps": [],
-                "available_app_updates": [],
-                "pending_os_updates": []
+                "reboot_required": SystemInfo.is_reboot_required()
             }
-            self.api_client.send_report(report_data)
+            self.api_client.send_heartbeat(heartbeat_data)
             self.last_light_report_time = time.time()
         except Exception as e:
-            logging.error(f"Błąd podczas wysyłania lekkiego raportu: {e}")
+            logging.error(f"Błąd podczas wysyłania sygnału heartbeat: {e}")
 
     def run_full_report(self):
         """Wysyła pełny, czasochłonny raport ze wszystkimi danymi."""
@@ -272,12 +270,11 @@ class Agent:
     def _schedule_task_on_logon(self, task_id, base_command, payload):
         task_name = f"WingetAgentTask_{task_id}"
         command_to_run = ""
-        winget_executable = "winget"
 
         if base_command in ['request_update', 'force_update']:
-            command_to_run = f"& '{winget_executable}' update --id '{payload}' --silent --accept-package-agreements; schtasks /Delete /TN '{task_name}' /F"
+            command_to_run = f"winget update --id '{payload}' --silent --accept-package-agreements; schtasks /Delete /TN '{task_name}' /F"
         elif base_command in ['request_uninstall', 'force_uninstall']:
-            command_to_run = f"& '{winget_executable}' uninstall --id '{payload}' --silent --force; schtasks /Delete /TN '{task_name}' /F"
+            command_to_run = f"winget uninstall --id '{payload}' --silent --force; schtasks /Delete /TN '{task_name}' /F"
         elif base_command in ['request_os_update', 'force_os_update']:
             command_to_run = f"{self._get_os_update_script()}; schtasks /Delete /TN '{task_name}' /F"
         else:
@@ -300,17 +297,16 @@ class Agent:
         self.api_client.send_task_result(task_id, 'w_trakcie_wykonywania')
         final_command = ""
         action_type_for_msg = "operacja"
-        winget_executable = "winget"
 
         if payload == 'os_update' or base_command == 'os_update':
             action_type_for_msg = "aktualizacja systemu"
             final_command = self._get_os_update_script()
         elif base_command == 'update':
             action_type_for_msg = "aktualizacja aplikacji"
-            final_command = f'& "{winget_executable}" update --id "{payload}" --silent --accept-package-agreements --accept-source-agreements --disable-interactivity'
+            final_command = f'winget update --id "{payload}" --silent --accept-package-agreements --accept-source-agreements --disable-interactivity'
         elif base_command == 'uninstall':
             action_type_for_msg = "deinstalacja aplikacji"
-            final_command = f'& "{winget_executable}" uninstall --id "{payload}" --silent --force --accept-source-agreements --disable-interactivity'
+            final_command = f'winget uninstall --id "{payload}" --silent --force --accept-source-agreements --disable-interactivity'
         else:
             self.api_client.send_task_result(task_id, 'błąd', f"Agent nie rozpoznał polecenia: {base_command}")
             return
@@ -445,8 +441,8 @@ class AgentService(win32serviceutil.ServiceFramework):
 
     def main_loop(self, service_framework):
         try:
-            # Wyślij pierwszy lekki raport natychmiast, aby pokazać status online
-            self.agent.run_light_report()
+            # Wyślij pierwszy heartbeat natychmiast, aby pokazać status online
+            self.agent.send_heartbeat()
             # Uruchom pierwszy pełny raport w tle, aby nie blokować startu usługi
             logging.info("Uruchamianie początkowego pełnego raportu w tle...")
             initial_full_report_thread = threading.Thread(target=self.agent.run_full_report, daemon=True)
@@ -464,7 +460,7 @@ class AgentService(win32serviceutil.ServiceFramework):
                 if (now - self.agent.last_full_report_time) >= REPORT_INTERVAL:
                     self.agent.run_full_report()
                 elif (now - self.agent.last_light_report_time) >= LIGHT_REPORT_INTERVAL:
-                    self.agent.run_light_report()
+                    self.agent.send_heartbeat()
             except Exception as e:
                 logging.error(f"Nieoczekiwany błąd w pętli: {e}", exc_info=True)
                 time.sleep(60)

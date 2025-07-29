@@ -20,7 +20,6 @@ def close_db(e=None):
 
 def init_db():
     db = get_db()
-    # Zakładamy, że schema.sql jest w folderze winget_dashboard
     with current_app.open_resource('schema.sql') as f:
         db.executescript(f.read().decode('utf8'))
     db.commit()
@@ -108,14 +107,32 @@ class DatabaseManager:
             return None
 
     def update_agent_update_status(self, hostname, status):
-        """Aktualizuje status ostatniej próby self-update agenta."""
         self._execute(
             "UPDATE computers SET last_agent_update_status = ?, last_agent_update_ts = CURRENT_TIMESTAMP WHERE hostname = ? COLLATE NOCASE",
             (status, hostname), commit=True)
         logging.info(f"Zaktualizowano status self-update dla {hostname} na: {status}")
 
+    def update_computer_status_from_heartbeat(self, data):
+        """Aktualizuje tylko podstawowe dane komputera na podstawie sygnału heartbeat, nie tworząc nowego raportu."""
+        hostname = data.get('hostname')
+        if not hostname:
+            return
+
+        self._execute(
+            """UPDATE computers SET 
+               last_report = CURRENT_TIMESTAMP, 
+               ip_address = ?, 
+               reboot_required = ?, 
+               agent_version = ? 
+               WHERE hostname = ? COLLATE NOCASE""",
+            (data.get('ip_address'),
+             data.get('reboot_required', False),
+             data.get('agent_version', 'N/A'),
+             hostname),
+            commit=True)
+        logging.info(f"Odebrano heartbeat od {hostname}. Zaktualizowano status online.")
+
     def get_all_computers(self):
-        """Pobiera wszystkie komputery z nowymi polami statusu agenta oraz liczbą aktualizacji."""
         query = """
         SELECT
             c.id, c.hostname, c.ip_address, c.last_report, c.reboot_required, c.agent_version,
@@ -288,6 +305,14 @@ class DatabaseManager:
         return result['status'] if result else None
 
     def delete_computer(self, computer_id):
-        """Trwale usuwa komputer i wszystkie powiązane z nim dane."""
         self._execute("DELETE FROM computers WHERE id = ?", (computer_id,), commit=True)
         logging.info(f"Usunięto komputer o ID: {computer_id}")
+
+    def get_pending_updates_for_computer(self, computer_id):
+        """Pobiera listę wszystkich oczekujących aktualizacji (aplikacji i OS) dla danego komputera z ostatniego raportu."""
+        query = """
+        SELECT update_type, app_id
+        FROM updates
+        WHERE report_id = (SELECT MAX(id) FROM reports WHERE computer_id = ?)
+        """
+        return self._execute(query, (computer_id,)).fetchall()
