@@ -115,11 +115,34 @@ class DatabaseManager:
         logging.info(f"Zaktualizowano status self-update dla {hostname} na: {status}")
 
     def get_all_computers(self):
-        """Pobiera wszystkie komputery z nowymi polami statusu agenta."""
-        return self._execute(
-            "SELECT id, hostname, ip_address, last_report, reboot_required, agent_version, last_agent_update_status, last_agent_update_ts FROM computers ORDER BY hostname COLLATE NOCASE").fetchall()
+        """Pobiera wszystkie komputery z nowymi polami statusu agenta oraz liczbą aktualizacji."""
+        query = """
+        SELECT
+            c.id, c.hostname, c.ip_address, c.last_report, c.reboot_required, c.agent_version,
+            c.last_agent_update_status, c.last_agent_update_ts,
+            IFNULL(upd_counts.app_updates, 0) as app_update_count,
+            IFNULL(upd_counts.os_updates, 0) as os_update_count
+        FROM
+            computers c
+        LEFT JOIN
+            (SELECT
+                r.computer_id,
+                SUM(CASE WHEN u.update_type = 'APP' THEN 1 ELSE 0 END) as app_updates,
+                SUM(CASE WHEN u.update_type = 'OS' THEN 1 ELSE 0 END) as os_updates
+            FROM
+                updates u
+            JOIN
+                reports r ON u.report_id = r.id
+            WHERE
+                u.report_id IN (SELECT MAX(id) FROM reports GROUP BY computer_id)
+            GROUP BY
+                r.computer_id
+            ) as upd_counts ON c.id = upd_counts.computer_id
+        ORDER BY
+            c.hostname COLLATE NOCASE;
+        """
+        return self._execute(query).fetchall()
 
-    # ... reszta metod bez zmian (get_computer_details, create_task etc.)
     def update_computer_blacklist(self, hostname, new_blacklist):
         self._execute("UPDATE computers SET blacklist_keywords = ? WHERE hostname = ? COLLATE NOCASE",
                       (new_blacklist, hostname), commit=True)
@@ -197,7 +220,6 @@ class DatabaseManager:
         if tasks:
             task_ids_to_update = []
             for t in tasks:
-                # Nie chcemy zmieniać statusu zadania self_update, bo robi to agent w innym momencie
                 if t['command'] != 'self_update':
                     task_ids_to_update.append(t['id'])
 
@@ -249,8 +271,7 @@ class DatabaseManager:
         logging.info(f"Usunięto zadania o ID: {task_ids}")
 
     def get_computer_tasks(self, computer_id):
-        # Pokazujemy wszystkie statusy oprócz "zakończone", aby widzieć błędy i zadania w toku.
-        final_statuses = ('zakończone',)  # <-- Poprawka: ukrywamy tylko to co się w pełni udało
+        final_statuses = ('zakończone',)
         placeholders = '?'
         query = f"SELECT id, payload, status, command FROM tasks WHERE computer_id = ? AND status NOT IN ({placeholders})"
         tasks = self._execute(query, (computer_id,) + final_statuses).fetchall()

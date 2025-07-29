@@ -46,6 +46,18 @@
                             {% endif %}
                         </div>
                         <div class="tile-info">
+                            <strong>Aktualizacje Aplikacji:</strong>
+                            <span class="{% if computer.app_update_count > 0 %}status-pending{% else %}status-ok{% endif %}">
+                                {{ computer.app_update_count }}
+                            </span>
+                        </div>
+                        <div class="tile-info">
+                            <strong>Aktualizacje Systemu:</strong>
+                            <span class="{% if computer.os_update_count > 0 %}status-pending{% else %}status-ok{% endif %}">
+                                {{ computer.os_update_count }}
+                            </span>
+                        </div>
+                        <div class="tile-info">
                             <strong>Ostatni raport:</strong>
                             <span>{{ computer.last_report | to_local_time }}</span>
                         </div>
