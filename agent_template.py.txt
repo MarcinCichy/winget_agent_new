@@ -272,12 +272,11 @@ class Agent:
     def _schedule_task_on_logon(self, task_id, base_command, payload):
         task_name = f"WingetAgentTask_{task_id}"
         command_to_run = ""
-        winget_executable = "winget"
 
         if base_command in ['request_update', 'force_update']:
-            command_to_run = f"& '{winget_executable}' update --id '{payload}' --silent --accept-package-agreements; schtasks /Delete /TN '{task_name}' /F"
+            command_to_run = f"winget update --id '{payload}' --silent --accept-package-agreements; schtasks /Delete /TN '{task_name}' /F"
         elif base_command in ['request_uninstall', 'force_uninstall']:
-            command_to_run = f"& '{winget_executable}' uninstall --id '{payload}' --silent --force; schtasks /Delete /TN '{task_name}' /F"
+            command_to_run = f"winget uninstall --id '{payload}' --silent --force; schtasks /Delete /TN '{task_name}' /F"
         elif base_command in ['request_os_update', 'force_os_update']:
             command_to_run = f"{self._get_os_update_script()}; schtasks /Delete /TN '{task_name}' /F"
         else:
@@ -300,17 +299,16 @@ class Agent:
         self.api_client.send_task_result(task_id, 'w_trakcie_wykonywania')
         final_command = ""
         action_type_for_msg = "operacja"
-        winget_executable = "winget"
 
         if payload == 'os_update' or base_command == 'os_update':
             action_type_for_msg = "aktualizacja systemu"
             final_command = self._get_os_update_script()
         elif base_command == 'update':
             action_type_for_msg = "aktualizacja aplikacji"
-            final_command = f'& "{winget_executable}" update --id "{payload}" --silent --accept-package-agreements --accept-source-agreements --disable-interactivity'
+            final_command = f'winget update --id "{payload}" --silent --accept-package-agreements --accept-source-agreements --disable-interactivity'
         elif base_command == 'uninstall':
             action_type_for_msg = "deinstalacja aplikacji"
-            final_command = f'& "{winget_executable}" uninstall --id "{payload}" --silent --force --accept-source-agreements --disable-interactivity'
+            final_command = f'winget uninstall --id "{payload}" --silent --force --accept-source-agreements --disable-interactivity'
         else:
             self.api_client.send_task_result(task_id, 'błąd', f"Agent nie rozpoznał polecenia: {base_command}")
             return
@@ -445,9 +443,7 @@ class AgentService(win32serviceutil.ServiceFramework):
 
     def main_loop(self, service_framework):
         try:
-            # Wyślij pierwszy lekki raport natychmiast, aby pokazać status online
             self.agent.run_light_report()
-            # Uruchom pierwszy pełny raport w tle, aby nie blokować startu usługi
             logging.info("Uruchamianie początkowego pełnego raportu w tle...")
             initial_full_report_thread = threading.Thread(target=self.agent.run_full_report, daemon=True)
             initial_full_report_thread.start()
