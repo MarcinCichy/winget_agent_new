@@ -21,7 +21,7 @@ API_KEY = "__API_KEY__"
 AGENT_VERSION = "__AGENT_VERSION__"
 LOOP_INTERVAL = int("__LOOP_INTERVAL__")
 REPORT_INTERVAL = int("__REPORT_INTERVAL__")
-LIGHT_REPORT_INTERVAL = 300  # 5 minut
+LIGHT_REPORT_INTERVAL = 120  # 2 minut
 WINGET_PATH_CONF = r"__WINGET_PATH__"
 
 # --- Klasy logiki ---
@@ -155,7 +155,7 @@ class WingetManager:
         return [app for app in all_apps if not any(keyword.lower() in app['name'].lower() for keyword in blacklist)]
 
     def get_available_updates(self):
-        stdout = self._get_winget_data("winget upgrade --accept-source-agreements --disable-interactivity")
+        stdout = self._get_winget_data("winget upgrade --accept-source-agreements --disable-interactivity --include-unknown")
         if not stdout: return []
         return self._parse_winget_output(stdout)
 
@@ -303,10 +303,10 @@ class Agent:
             final_command = self._get_os_update_script()
         elif base_command == 'update':
             action_type_for_msg = "aktualizacja aplikacji"
-            final_command = f'winget update --id "{payload}" --silent --accept-package-agreements --accept-source-agreements --disable-interactivity'
+            final_command = f"winget update --id '{payload}' --silent --accept-package-agreements --accept-source-agreements --disable-interactivity"
         elif base_command == 'uninstall':
             action_type_for_msg = "deinstalacja aplikacji"
-            final_command = f'winget uninstall --id "{payload}" --silent --force --accept-source-agreements --disable-interactivity'
+            final_command = f"winget uninstall --id '{payload}' --silent --force --accept-source-agreements --disable-interactivity"
         else:
             self.api_client.send_task_result(task_id, 'błąd', f"Agent nie rozpoznał polecenia: {base_command}")
             return
@@ -322,10 +322,26 @@ class Agent:
         try:
             response = json.loads(response_json)
             status, details = response.get('status'), response.get('details')
+            task_was_successful = False
+
             if status == 'success':
                 self.api_client.send_task_result(task_id, 'zakończone', details)
+                task_was_successful = True
             else:
-                if details and "application is currently running" in details.lower():
+                if details and ("no available upgrade found" in details.lower() or "no newer package versions are available" in details.lower()):
+                    logging.info(f"Zadanie {task_id} dla '{payload}' zgłosiło, że pakiet jest już aktualny. Oznaczam jako zakończone.")
+                    self.api_client.send_task_result(task_id, 'zakończone', "Pakiet był już w najnowszej wersji.")
+                    task_was_successful = True
+                elif details and "the package cannot be upgraded using winget" in details.lower():
+                    logging.warning(f"Zadanie {task_id} dla '{payload}' nie powiodło się, ponieważ pakiet wymaga własnego mechanizmu aktualizacji.")
+                    self.api_client.send_task_result(task_id, 'niepowodzenie_wlasny_updater', "Pakiet wymaga aktualizacji przez mechanizm dostarczony przez wydawcę.")
+                    UiClient.send_request({"type": "info", "title": "Wymagana akcja manualna", "message": f"Aktualizacja aplikacji '{payload}' nie może być wykonana automatycznie.\n\nProsimy o ręczne uruchomienie tej aplikacji i skorzystanie z jej wbudowanego mechanizmu aktualizacji."})
+                elif details and "installer failed with exit code: 1603" in details.lower():
+                    logging.error(f"Zadanie {task_id} dla '{payload}' nie powiodło się z kodem błędu instalatora 1603.")
+                    error_message = "Instalator MSI zwrócił kod błędu 1603 (Błąd krytyczny). Może to oznaczać, że aplikacja jest w użyciu lub wystąpił inny problem. Sprawdź logi winget na komputerze klienckim."
+                    self.api_client.send_task_result(task_id, 'niepowodzenie_kod_1603', error_message)
+                    UiClient.send_request({"type": "info", "title": "Błąd instalacji aplikacji", "message": f"Automatyczna aktualizacja aplikacji '{payload}' nie powiodła się z powodu błędu instalatora (kod 1603). Prosimy o próbę ręcznej instalacji."})
+                elif details and "application is currently running" in details.lower():
                     logging.info(f"Wykryto, że aplikacja '{payload}' jest uruchomiona. Automatycznie planuję zadanie na następne logowanie.")
                     UiClient.send_request({"type": "info", "title": "Aktualizacja odroczona", "message": f"Aplikacja '{payload}' jest w użyciu. Aktualizacja została automatycznie zaplanowana na następne logowanie."})
                     self.api_client.send_task_result(task_id, 'odroczone_aplikacja_uruchomiona', details)
@@ -333,6 +349,11 @@ class Agent:
                 else:
                     self.api_client.send_task_result(task_id, 'niepowodzenie_interwencja_uzytkownika', details)
                     UiClient.send_request({"type": "info", "title": "Automatyzacja nie powiodła się", "message": f"Automatyczna {action_type_for_msg} '{payload if payload != 'os_update' else ''}' nie powiodła się. Prosimy o ręczne wykonanie tej operacji."})
+
+            if task_was_successful and base_command in ['update', 'uninstall']:
+                logging.info(f"Zadanie {task_id} zakończone sukcesem. Uruchamiam pełny raport w tle w celu odświeżenia stanu.")
+                threading.Thread(target=self.run_full_report, daemon=True).start()
+
         except (json.JSONDecodeError, TypeError, AttributeError) as e:
             self.api_client.send_task_result(task_id, 'błąd', f"Błąd wewnętrzny agenta: {e}")
 

@@ -130,7 +130,7 @@ class ReportGenerator:
         hostname, ip_address = report_info['hostname'], report_info['ip_address']
         content = [f"# RAPORT DLA KOMPUTERA: {hostname} ({ip_address})"]
 
-        report_time = report_info.get('report_timestamp') or report_info.get('last_report')
+        report_time = report_info['report_timestamp'] if 'report_timestamp' in report_info.keys() else report_info['last_report']
         content.append(f"Data raportu: {self._to_local_time(report_time)}")
         content.append(
             f"Data wygenerowania pliku: {datetime.now(ZoneInfo('Europe/Warsaw')).strftime('%Y-%m-%d %H:%M:%S')}\n")

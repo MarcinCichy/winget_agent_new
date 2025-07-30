@@ -59,7 +59,9 @@
                     {% set task_key = 'os_update' if update.update_type == 'OS' else update.app_id %}
                     {% if task_key in task_statuses %}
                         {% set task = task_statuses[task_key] %}
-                        <span class="status-pending">{{ task.status | replace('_', ' ') | capitalize }}</span>
+                        <span class="status-{{ 'pending' if 'niepowodzenie' not in task.status and 'błąd' not in task.status else 'fail' }}">
+                            {{ task.status | replace('_', ' ') | capitalize }}
+                        </span>
                         {% if 'niepowodzenie' in task.status or 'błąd' in task.status %}
                             <button class="action-btn-link details-btn" data-task-id="{{ task.id }}">(pokaż szczegóły)</button>
                         {% endif %}
@@ -69,28 +71,26 @@
                 </td>
                 <td>{{ update.current_version or 'N/A' }} -> {{ update.available_version or 'N/A' }}</td>
                 <td>
-                    {% if update.update_type == 'APP' %}
-                        {% if update.app_id not in task_statuses %}
+                    {# --- LOGIKA WYŚWIETLANIA PRZYCISKU --- #}
+                    {% set task_key = 'os_update' if update.update_type == 'OS' else update.app_id %}
+                    {% set task_is_active = false %}
+                    {% if task_key in task_statuses %}
+                        {% set active_statuses = ['oczekuje', 'w_trakcie_wykonywania', 'oczekuje_na_uzytkownika', 'w_trakcie_aktualizacji', 'zaplanowane_na_logowanie'] %}
+                        {% if task_statuses[task_key].status in active_statuses %}
+                            {% set task_is_active = true %}
+                        {% endif %}
+                    {% endif %}
+
+                    {% if not task_is_active %}
                         <div class="action-group">
-                            <button class="action-btn update-btn main-action" data-action="request_update" data-computer-id="{{ computer.id }}" data-package-id="{{ update.app_id }}">Poproś</button>
+                            {% set pkg_id = 'os_update' if update.update_type == 'OS' else update.app_id %}
+                            <button class="action-btn update-btn main-action" data-action="request_update" data-computer-id="{{ computer.id }}" data-package-id="{{ pkg_id }}">Poproś</button>
                             <button class="action-btn update-btn dropdown-toggle" aria-haspopup="true" aria-expanded="false">&#9662;</button>
                             <div class="dropdown-menu">
-                                <a href="#" class="dropdown-item" data-action="request_update" data-computer-id="{{ computer.id }}" data-package-id="{{ update.app_id }}">Poproś o aktualizację</a>
-                                <a href="#" class="dropdown-item" data-action="force_update" data-computer-id="{{ computer.id }}" data-package-id="{{ update.app_id }}">Wymuś aktualizację</a>
+                                <a href="#" class="dropdown-item" data-action="request_update" data-computer-id="{{ computer.id }}" data-package-id="{{ pkg_id }}">Poproś o aktualizację</a>
+                                <a href="#" class="dropdown-item" data-action="force_update" data-computer-id="{{ computer.id }}" data-package-id="{{ pkg_id }}">Wymuś aktualizację</a>
                             </div>
                         </div>
-                        {% endif %}
-                    {% elif update.update_type == 'OS' %}
-                        {% if 'os_update' not in task_statuses %}
-                        <div class="action-group">
-                             <button class="action-btn update-btn main-action" data-action="request_os_update" data-computer-id="{{ computer.id }}" data-package-id="os_update">Poproś</button>
-                             <button class="action-btn update-btn dropdown-toggle" aria-haspopup="true" aria-expanded="false">&#9662;</button>
-                             <div class="dropdown-menu">
-                                 <a href="#" class="dropdown-item" data-action="request_os_update" data-computer-id="{{ computer.id }}" data-package-id="os_update">Poproś o aktualizację</a>
-                                 <a href="#" class="dropdown-item" data-action="force_os_update" data-computer-id="{{ computer.id }}" data-package-id="os_update">Wymuś aktualizację</a>
-                             </div>
-                         </div>
-                        {% endif %}
                     {% endif %}
                 </td>
             </tr>
@@ -120,8 +120,10 @@
                 <td>
                     {% if app.app_id in task_statuses %}
                         {% set task = task_statuses[app.app_id] %}
-                        {% if task.command.startswith('request_uninstall') or task.command.startswith('force_uninstall') %}
-                            <span class="status-pending">{{ task.status | replace('_', ' ') | capitalize }}</span>
+                         {% if task.command.startswith('request_uninstall') or task.command.startswith('force_uninstall') %}
+                            <span class="status-{{ 'pending' if 'niepowodzenie' not in task.status and 'błąd' not in task.status else 'fail' }}">
+                                {{ task.status | replace('_', ' ') | capitalize }}
+                            </span>
                             {% if 'niepowodzenie' in task.status or 'błąd' in task.status %}
                                 <button class="action-btn-link details-btn" data-task-id="{{ task.id }}">(pokaż szczegóły)</button>
                             {% endif %}
@@ -129,15 +131,27 @@
                     {% endif %}
                 </td>
                 <td>
-                    {% if not task_statuses[app.app_id] or not (task_statuses[app.app_id].command.startswith('request_uninstall') or task_statuses[app.app_id].command.startswith('force_uninstall')) %}
-                    <div class="action-group">
-                        <button class="action-btn uninstall-btn main-action" data-action="request_uninstall" data-computer-id="{{ computer.id }}" data-package-id="{{ app.app_id }}">Poproś</button>
-                        <button class="action-btn uninstall-btn dropdown-toggle" aria-haspopup="true" aria-expanded="false">&#9662;</button>
-                        <div class="dropdown-menu">
-                            <a href="#" class="dropdown-item" data-action="request_uninstall" data-computer-id="{{ computer.id }}" data-package-id="{{ app.app_id }}">Poproś o deinstalację</a>
-                            <a href="#" class="dropdown-item" data-action="force_uninstall" data-computer-id="{{ computer.id }}" data-package-id="{{ app.app_id }}">Wymuś deinstalację</a>
+                    {# --- LOGIKA WYŚWIETLANIA PRZYCISKU --- #}
+                    {% set task_is_active = false %}
+                    {% if app.app_id in task_statuses %}
+                        {% set task = task_statuses[app.app_id] %}
+                        {% if task.command.startswith('request_uninstall') or task.command.startswith('force_uninstall') %}
+                            {% set active_statuses = ['oczekuje', 'w_trakcie_wykonywania', 'oczekuje_na_uzytkownika', 'w_trakcie_aktualizacji', 'zaplanowane_na_logowanie'] %}
+                            {% if task.status in active_statuses %}
+                                {% set task_is_active = true %}
+                            {% endif %}
+                        {% endif %}
+                    {% endif %}
+
+                    {% if not task_is_active %}
+                        <div class="action-group">
+                            <button class="action-btn uninstall-btn main-action" data-action="request_uninstall" data-computer-id="{{ computer.id }}" data-package-id="{{ app.app_id }}">Poproś</button>
+                            <button class="action-btn uninstall-btn dropdown-toggle" aria-haspopup="true" aria-expanded="false">&#9662;</button>
+                            <div class="dropdown-menu">
+                                <a href="#" class="dropdown-item" data-action="request_uninstall" data-computer-id="{{ computer.id }}" data-package-id="{{ app.app_id }}">Poproś o deinstalację</a>
+                                <a href="#" class="dropdown-item" data-action="force_uninstall" data-computer-id="{{ computer.id }}" data-package-id="{{ app.app_id }}">Wymuś deinstalację</a>
+                            </div>
                         </div>
-                    </div>
                     {% endif %}
                 </td>
             </tr>

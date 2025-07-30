@@ -1,7 +1,8 @@
 import os
-import logging
 import shutil
 import io
+import socket
+import logging
 from flask import (Blueprint, render_template, current_app, send_file, request, flash, redirect, url_for, abort,
                    Response, after_this_request)
 from datetime import datetime, timezone
@@ -10,6 +11,25 @@ from .db import DatabaseManager
 from .services import AgentGenerator, ReportGenerator, AgentVersionService
 
 bp = Blueprint('views', __name__)
+
+
+def _get_suggested_server_address():
+    """Sugeruje adres serwera, dając priorytet zmiennej środowiskowej."""
+    # Metoda 1: Użyj zmiennej środowiskowej (najlepsza dla Dockera)
+    env_url = os.environ.get('SERVER_PUBLIC_URL')
+    if env_url:
+        return env_url.strip('/')
+
+    # Metoda 2: Spróbuj automatycznie wykryć IP (dla testów lokalnych)
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            # Nie trzeba wysyłać danych, samo połączenie ustawi adres
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            return f"http://{ip}:5000"
+    except Exception:
+        # Metoda 3: Fallback, jeśli wszystko inne zawiedzie
+        return "http://TWOJ_ADRES_IP:5000"
 
 
 @bp.route('/')
@@ -79,11 +99,13 @@ def settings():
 
     server_agent_info = version_service.get_server_agent_info()
     suggested_next_version = version_service.get_suggested_next_version()
+    suggested_server_address = _get_suggested_server_address()
 
     return render_template('settings.html',
                            server_api_key=current_app.config['API_KEY'],
                            server_agent_info=server_agent_info,
                            suggested_next_version=suggested_next_version,
+                           suggested_server_address=suggested_server_address,
                            default_blacklist_keywords=current_app.config['DEFAULT_BLACKLIST_KEYWORDS'])
 
 

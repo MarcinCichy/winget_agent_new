@@ -31,4 +31,4 @@ vcredist
 """
     AGENT_TEMPLATE_PATH = os.path.join(basedir, "..", "agent_template.py.txt")
 
-    AGENT_OFFLINE_THRESHOLD = 900
+    AGENT_OFFLINE_THRESHOLD = 420

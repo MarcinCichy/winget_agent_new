@@ -288,10 +288,17 @@ class DatabaseManager:
         logging.info(f"Usunięto zadania o ID: {task_ids}")
 
     def get_computer_tasks(self, computer_id):
-        final_statuses = ('zakończone',)
-        placeholders = '?'
-        query = f"SELECT id, payload, status, command FROM tasks WHERE computer_id = ? AND status NOT IN ({placeholders})"
-        tasks = self._execute(query, (computer_id,) + final_statuses).fetchall()
+        """Pobiera najnowsze zadanie dla każdego payloadu danego komputera."""
+        query = """
+        SELECT id, payload, status, command, updated_at
+        FROM (
+            SELECT *, ROW_NUMBER() OVER(PARTITION BY payload ORDER BY updated_at DESC) as rn
+            FROM tasks
+            WHERE computer_id = ?
+        )
+        WHERE rn = 1
+        """
+        tasks = self._execute(query, (computer_id,)).fetchall()
         task_map = {}
         for task in tasks:
             task_map[task['payload']] = {'id': task['id'], 'status': task['status'], 'command': task['command']}
