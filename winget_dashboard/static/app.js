@@ -389,7 +389,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Logika dla przycisku usuwania komputera
     document.querySelectorAll('.delete-computer-btn').forEach(button => {
         button.addEventListener('click', function(e) {
             e.preventDefault();
@@ -405,7 +404,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 .then(response => response.json())
                 .then(data => {
                     if (data.status === 'success') {
-                        // Zamiast przeładowywać, płynnie usuń kafelek
                         this.closest('.computer-tile').style.transform = 'scale(0)';
                         setTimeout(() => {
                            this.closest('.computer-tile').remove();
@@ -419,6 +417,41 @@ document.addEventListener('DOMContentLoaded', () => {
                     alert('Wystąpił krytyczny błąd sieci.');
                 });
             }
+        });
+    });
+
+    // === NOWY KOD DLA PRZYCISKU "AKTUALIZUJ WSZYSTKO" ===
+    document.querySelectorAll('.update-all-btn').forEach(button => {
+        button.addEventListener('click', function(e) {
+            e.preventDefault();
+            const computerId = this.dataset.computerId;
+
+            if (!confirm('Czy na pewno chcesz zlecić wszystkie dostępne aktualizacje (aplikacji i systemu) dla tego komputera? Użytkownik zostanie poproszony o zgodę.')) {
+                return;
+            }
+
+            const originalText = this.textContent;
+            this.textContent = 'Zlecanie...';
+            this.disabled = true;
+
+            fetch(`/api/computer/${computerId}/update_all`, {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    // Przeładowanie strony spowoduje, że statusy zadań się pojawią
+                    forceReload();
+                } else {
+                    throw new Error(data.message || 'Nie udało się zlecić zadań.');
+                }
+            })
+            .catch(error => {
+                console.error("Błąd podczas zlecania wszystkich aktualizacji:", error);
+                alert("Wystąpił błąd: " + error.message);
+                this.textContent = originalText;
+                this.disabled = false;
+            });
         });
     });
 });

@@ -135,6 +135,7 @@ tbody tr:hover { background-color: var(--kolor-tla-hover); }
 .update-btn { background-color: #28a745; border-color: #28a745; }
 .uninstall-btn { background-color: #dc3545; border-color: #dc3545; }
 .btn-secondary { background-color: #6c757d; border-color: #6c757d; }
+.btn-danger { background-color: #dc3545; border-color: #dc3545; }
 .action-btn-link {
     background: none;
     border: none;
@@ -160,7 +161,6 @@ tbody tr:hover { background-color: var(--kolor-tla-hover); }
     z-index: 1;
 }
 
-/* ### ZMIANA: DODANE STYLE DLA WIADOMOŚCI FLASH ### */
 .flash-message {
     padding: 1rem;
     margin-bottom: 1rem;
@@ -174,7 +174,6 @@ tbody tr:hover { background-color: var(--kolor-tla-hover); }
 .flash-message.error {
     background-color: var(--kolor-bledu);
 }
-/* ### KONIEC ZMIAN ### */
 
 /* Pozostałe style */
 .icon-btn { background: none; border: none; cursor: pointer; padding: 5px; vertical-align: middle; line-height: 0; }
@@ -365,34 +364,32 @@ html.dark-mode #theme-toggle .moon-icon { display: none; }
 
 .computer-grid {
     display: grid;
-    /* Tworzy elastyczne kolumny: dopasowuje ich ilość do szerokości ekranu,
-       każda ma minimum 320px szerokości, a nadmiarowe miejsce jest równo dzielone. */
     grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 1.5rem; /* Odstęp między kafelkami */
+    gap: 1.5rem;
     padding-top: 1rem;
 }
 
 .computer-tile {
-    position: relative; /* Potrzebne do pozycjonowania przycisku usuwania */
+    position: relative;
     background-color: var(--kolor-tabeli-tlo);
     border-radius: 8px;
     box-shadow: 0 2px 5px var(--kolor-cienia);
     display: flex;
-    flex-direction: column; /* Układa elementy jeden pod drugim */
+    flex-direction: column;
     transition: transform 0.3s ease-in-out, box-shadow 0.2s ease-in-out;
 }
 
 .computer-tile:hover {
-    transform: translateY(-5px); /* Lekkie uniesienie kafelka */
+    transform: translateY(-5px);
     box-shadow: 0 4px 10px var(--kolor-cienia);
 }
 
 .tile-main-link {
     text-decoration: none;
-    color: inherit; /* Dziedziczy kolor tekstu z rodzica */
+    color: inherit;
     display: flex;
     flex-direction: column;
-    flex-grow: 1; /* Sprawia, że link wypełnia całą dostępną przestrzeń */
+    flex-grow: 1;
     padding: 1rem;
 }
 
@@ -419,12 +416,12 @@ html.dark-mode .tile-ip {
 }
 
 .tile-body {
-    flex-grow: 1; /* Wypycha przyciski na dół */
+    flex-grow: 1;
 }
 
 .tile-info {
     display: flex;
-    justify-content: space-between; /* Klucz po lewej, wartość po prawej */
+    justify-content: space-between;
     margin-bottom: 0.5rem;
     font-size: 0.9em;
 }

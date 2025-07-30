@@ -7,6 +7,9 @@
 {% endblock %}
 
 {% block header_main_right %}
+    {% if updates|length > 0 %}
+        <button class="action-btn btn-danger update-all-btn" data-computer-id="{{ computer.id }}">Akt. wszystko</button>
+    {% endif %}
     <a href="{{ url_for('views.report_single', computer_id=computer.id) }}" class="action-btn btn-report">Generuj raport</a>
     <button class="action-btn refresh-btn" data-computer-id="{{ computer.id }}">Odśwież</button>
     <a href="{{ url_for('views.computer_history', hostname=computer.hostname) }}" class="action-btn btn-secondary">Pokaż historię</a>
