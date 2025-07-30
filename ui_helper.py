@@ -12,9 +12,9 @@ import ctypes
 import base64
 
 # ===============================================================
-# Lokalizacja logów w folderze użytkownika (%LOCALAPPDATA%)
+# Lokalizacja logów w folderze systemowym (%PROGRAMDATA%)
 # ===============================================================
-LOG_DIR = os.path.join(os.environ.get('LOCALAPPDATA'), "WingetAgent")
+LOG_DIR = os.path.join(os.environ.get('PROGRAMDATA', 'C:\\ProgramData'), "WingetAgent")
 LOG_FILE = os.path.join(LOG_DIR, "ui_helper.log")
 # ===============================================================
 
@@ -80,8 +80,14 @@ def run_command_as_user(command_str):
     logging.info(f"Polecenie po przetworzeniu ścieżki: {command_with_full_path}")
 
     try:
-        # POPRAWKA: Dodano operator wywołania '&' przed poleceniem
-        full_command = f"$ProgressPreference = 'SilentlyContinue'; [System.Threading.Thread]::CurrentThread.CurrentUICulture = 'en-US'; & {command_with_full_path}"
+        # --- POPRAWIONA LOGIKA ---
+        # Sprawdzamy, czy wykonujemy polecenie winget, czy wieloliniowy skrypt.
+        if "winget" in command_with_full_path:
+            # Dla poleceń winget z pełną ścieżką w cudzysłowie, operator '&' jest wymagany.
+            full_command = f"$ProgressPreference = 'SilentlyContinue'; [System.Threading.Thread]::CurrentThread.CurrentUICulture = 'en-US'; & {command_with_full_path}"
+        else:
+            # Dla skryptów wieloliniowych (np. aktualizacja OS), operator '&' powoduje błąd.
+            full_command = f"$ProgressPreference = 'SilentlyContinue'; [System.Threading.Thread]::CurrentThread.CurrentUICulture = 'en-US'; {command_with_full_path}"
 
         result = subprocess.run(
             ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", full_command],

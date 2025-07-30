@@ -23,7 +23,6 @@ def _get_suggested_server_address():
     # Metoda 2: Spróbuj automatycznie wykryć IP (dla testów lokalnych)
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            # Nie trzeba wysyłać danych, samo połączenie ustawi adres
             s.connect(("8.8.8.8", 80))
             ip = s.getsockname()[0]
             return f"http://{ip}:5000"
@@ -39,26 +38,34 @@ def index():
     version_service = AgentVersionService()
     server_agent_info = version_service.get_server_agent_info()
 
-    # Pobieramy próg offline z konfiguracji
     offline_threshold = current_app.config['AGENT_OFFLINE_THRESHOLD']
     now_utc = datetime.now(timezone.utc)
 
     computers = []
     for computer_row in computers_raw:
-        computer = dict(computer_row)  # Konwertujemy na słownik, aby dodać nowe pole
-        computer['is_offline'] = False
+        computer = dict(computer_row)
+        computer['is_offline'] = False  # Domyślnie ustawiamy jako online
 
-        last_report_str = computer.get('last_report')
-        if last_report_str:
+        last_report = computer.get('last_report')
+
+        if last_report:
             try:
-                # Konwertujemy czas ostatniego raportu na obiekt datetime świadomy strefy czasowej
-                last_report_dt = datetime.fromisoformat(last_report_str).replace(tzinfo=timezone.utc)
-                seconds_since_report = (now_utc - last_report_dt).total_seconds()
+                last_report_dt = None
+                # Sprawdzamy, czy data jest tekstem, czy już obiektem datetime
+                if isinstance(last_report, str):
+                    last_report_dt = datetime.fromisoformat(last_report).replace(tzinfo=timezone.utc)
+                elif isinstance(last_report, datetime):
+                    last_report_dt = last_report.replace(tzinfo=timezone.utc)
 
-                if seconds_since_report > offline_threshold:
-                    computer['is_offline'] = True
-            except (ValueError, TypeError):
-                # Jeśli data jest w złym formacie, traktujemy to jako błąd, ale nie offline
+                # Jeśli udało się przetworzyć datę, sprawdzamy próg
+                if last_report_dt:
+                    seconds_since_report = (now_utc - last_report_dt).total_seconds()
+                    if seconds_since_report > offline_threshold:
+                        computer['is_offline'] = True
+            except (ValueError, TypeError) as e:
+                # Jeśli wystąpi błąd, logujemy go zamiast ignorować
+                current_app.logger.warning(
+                    f"Nie można przetworzyć znacznika czasu '{last_report}' dla komputera {computer.get('hostname')}: {e}")
                 pass
         else:
             # Jeśli nigdy nie było raportu, uznajemy za offline
@@ -119,7 +126,6 @@ def generate_exe():
         agent_generator = AgentGenerator(template)
         config = {k: v for k, v in request.form.items()}
 
-        # Wersja jest teraz brana bezpośrednio z formularza generatora
         agent_version_to_generate = config.get('agent_version', '0.0.0')
 
         exe_path = agent_generator.generate_exe(config)
@@ -143,7 +149,6 @@ def generate_exe():
         return redirect(url_for('views.settings'))
 
 
-# ... (reszta tras bez zmian) ...
 @bp.route('/computer/<hostname>')
 def computer_details(hostname):
     db_manager = DatabaseManager()
@@ -186,7 +191,7 @@ def report_single(computer_id):
     if not details: abort(404)
     report_generator = ReportGenerator(db_manager)
     content = report_generator.generate_single_report_content(
-        {'report': details['computer'], 'apps': details['apps'], 'updates': details['updates']})
+        {'report': dict(details['computer']), 'apps': details['apps'], 'updates': details['updates']})
     computer = details['computer']
     filename = f"report_{computer['hostname']}_{datetime.now().strftime('%Y%m%d')}.txt"
     return Response(content, mimetype='text/plain', headers={"Content-disposition": f"attachment; filename={filename}"})
