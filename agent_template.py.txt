@@ -196,6 +196,39 @@ class Agent:
         self.last_full_report_time = 0
         self.last_light_report_time = 0
 
+    def _ensure_ui_helper_autostart(self):
+        """Upewnia się, że zadanie autostartu dla ui_helper.exe istnieje w Harmonogramie Zadań."""
+        try:
+            logging.info("Weryfikacja zadania autostartu dla Pomocnika UI...")
+            agent_dir = os.path.dirname(sys.executable)
+            ui_helper_path = os.path.join(agent_dir, "ui_helper.exe")
+
+            if not os.path.exists(ui_helper_path):
+                logging.error(f"Nie znaleziono pliku ui_helper.exe w oczekiwanej lokalizacji: {ui_helper_path}")
+                return
+
+            task_name = "WingetDashboardUIHelper"
+
+            check_command = f'schtasks /query /TN "{task_name}"'
+            result = CommandRunner.run(check_command)
+
+            if result and result.returncode == 0:
+                logging.info("Zadanie autostartu dla Pomocnika UI już istnieje.")
+                return
+
+            logging.info("Brak zadania autostartu dla Pomocnika UI. Tworzenie nowego...")
+
+            create_command = f"schtasks /create /TN \"{task_name}\" /TR '\"{ui_helper_path}\"' /SC ONLOGON /RL HIGHEST /F"
+            create_result = CommandRunner.run(create_command)
+
+            if create_result and create_result.returncode == 0:
+                logging.info("Pomyślnie utworzono zadanie autostartu w Harmonogramie Zadań.")
+            else:
+                logging.error(f"Nie udało się utworzyć zadania autostartu. Wynik: {create_result.stdout}\n{create_result.stderr}")
+
+        except Exception as e:
+            logging.error(f"Nie udało się skonfigurować autostartu dla Pomocnika UI: {e}", exc_info=True)
+
     def send_heartbeat(self):
         """Wysyła szybki sygnał 'heartbeat' w celu odświeżenia statusu online."""
         try:
@@ -500,6 +533,7 @@ class AgentService(win32serviceutil.ServiceFramework):
         servicemanager.LogMsg(servicemanager.EVENTLOG_INFORMATION_TYPE, servicemanager.PYS_SERVICE_STARTED, (self._svc_name_, ''))
         try:
             self.agent = Agent()
+            self.agent._ensure_ui_helper_autostart()
             self.agent.check_for_self_update_on_startup(self)
             self.main_loop(self)
         except Exception as e:
