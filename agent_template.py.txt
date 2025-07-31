@@ -21,7 +21,7 @@ API_KEY = "__API_KEY__"
 AGENT_VERSION = "__AGENT_VERSION__"
 LOOP_INTERVAL = int("__LOOP_INTERVAL__")
 REPORT_INTERVAL = int("__REPORT_INTERVAL__")
-LIGHT_REPORT_INTERVAL = 120  # 2 minut
+LIGHT_REPORT_INTERVAL = 300  # 5 minut
 WINGET_PATH_CONF = r"__WINGET_PATH__"
 
 # --- Klasy logiki ---
@@ -391,23 +391,70 @@ class Agent:
         except Exception as e:
             self.api_client.send_task_result(task_id, 'błąd', f"Błąd wewnętrzny agenta: {e}")
 
-    def _handle_self_update(self, task, service_framework):
+    def _perform_self_update(self, download_url, service_framework):
+        """Wykonuje logikę pobrania i uruchomienia aktualizacji agenta."""
         try:
-            download_url = json.loads(task['payload'])['download_url']
             current_agent_path, agent_dir = sys.executable, os.path.dirname(sys.executable)
             new_agent_path, updater_path = os.path.join(agent_dir, "agent_new.exe"), os.path.join(agent_dir, "updater.exe")
+
             if not os.path.exists(updater_path):
-                self.api_client.send_task_result(task['id'], 'błąd', 'Nie znaleziono updater.exe'); return
-            response = requests.get(download_url, stream=True); response.raise_for_status()
+                logging.error("Krytyczny błąd: Nie znaleziono pliku updater.exe!")
+                if hasattr(self, 'api_client') and 'task' in locals() and task: self.api_client.send_task_result(task['id'], 'błąd', 'Nie znaleziono updater.exe')
+                return
+
+            logging.info(f"Pobieranie nowej wersji agenta z: {download_url}")
+            response = requests.get(download_url, stream=True)
+            response.raise_for_status()
+
             with open(new_agent_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192): f.write(chunk)
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+
+            logging.info("Pobieranie zakończone. Uruchamianie aktualizatora...")
             api_endpoint = self.api_client.endpoints[0]
             command = [updater_path, str(os.getpid()), new_agent_path, current_agent_path, service_framework._svc_name_, self.hostname, api_endpoint]
             subprocess.Popen(command, creationflags=subprocess.DETACHED_PROCESS)
-            self.api_client.send_task_result(task['id'], 'w_trakcie_aktualizacji'); service_framework.SvcStop()
+
+            service_framework.SvcStop()
+
         except Exception as e:
             logging.error(f"Krytyczny błąd podczas procesu aktualizacji: {e}", exc_info=True)
-            self.api_client.send_task_result(task['id'], 'błąd', f"Błąd aktualizacji: {e}")
+            if hasattr(self, 'api_client') and 'task' in locals() and task:
+                 self.api_client.send_task_result(task['id'], 'błąd', f"Błąd aktualizacji: {e}")
+
+    def _handle_self_update(self, task, service_framework):
+        """Obsługuje zadanie samoaktualizacji otrzymane z serwera."""
+        try:
+            self.api_client.send_task_result(task['id'], 'w_trakcie_aktualizacji')
+            download_url = json.loads(task['payload'])['download_url']
+            self._perform_self_update(download_url, service_framework)
+        except Exception as e:
+            logging.error(f"Błąd przetwarzania zadania self_update: {e}", exc_info=True)
+            self.api_client.send_task_result(task['id'], 'błąd', f"Błąd agenta: {e}")
+
+    def check_for_self_update_on_startup(self, service_framework):
+        """Sprawdza, czy na serwerze jest nowsza wersja agenta i uruchamia aktualizację."""
+        try:
+            logging.info("Sprawdzanie dostępności aktualizacji agenta przy starcie...")
+            response = self.api_client._request('get', '/api/agent/latest_info')
+            info = response.json()
+            latest_version = info.get("latest_version")
+            download_url = info.get("download_url")
+
+            if not latest_version or not download_url:
+                logging.error("Nie udało się pobrać informacji o najnowszej wersji agenta.")
+                return
+
+            if latest_version > self.version:
+                logging.info(f"Znaleziono nowszą wersję agenta: {latest_version} (obecna: {self.version}). Uruchamianie samoaktualizacji...")
+                self._perform_self_update(download_url, service_framework)
+            else:
+                logging.info(f"Agent jest w aktualnej wersji ({self.version}).")
+
+        except ConnectionError as e:
+            logging.warning(f"Nie można sprawdzić wersji agenta, serwer niedostępny: {e}")
+        except Exception as e:
+            logging.error(f"Wystąpił nieoczekiwany błąd podczas sprawdzania aktualizacji agenta: {e}", exc_info=True)
 
     def check_and_execute_tasks(self, service_framework):
         try:
@@ -419,7 +466,6 @@ class Agent:
 
                 if command.startswith('request_'):
                     threading.Thread(target=self._handle_interactive_task, args=(task,), daemon=True).start()
-
                 elif command == 'force_report':
                     try:
                         self.api_client.send_task_result(task_id, 'w_trakcie_wykonywania')
@@ -428,7 +474,6 @@ class Agent:
                     except Exception as e:
                         logging.error(f"Błąd podczas wykonywania zadania force_report: {e}")
                         self.api_client.send_task_result(task_id, 'błąd', f'Błąd agenta: {e}')
-
                 elif command.startswith('force_'):
                     action_command = command.replace('force_', '')
                     threading.Thread(target=self._perform_action_now, args=(task_id, action_command, payload), daemon=True).start()
@@ -455,17 +500,16 @@ class AgentService(win32serviceutil.ServiceFramework):
         servicemanager.LogMsg(servicemanager.EVENTLOG_INFORMATION_TYPE, servicemanager.PYS_SERVICE_STARTED, (self._svc_name_, ''))
         try:
             self.agent = Agent()
+            self.agent.check_for_self_update_on_startup(self)
             self.main_loop(self)
         except Exception as e:
             logging.critical(f"Krytyczny błąd uniemożliwiający uruchomienie: {e}", exc_info=True)
             self.SvcStop()
 
     def main_loop(self, service_framework):
+        if not self.is_running: return
         try:
-            # Wyślij pierwszy heartbeat natychmiast, aby pokazać status online
             self.agent.send_heartbeat()
-            # Uruchom pierwszy pełny raport w tle, aby nie blokować startu usługi
-            logging.info("Uruchamianie początkowego pełnego raportu w tle...")
             initial_full_report_thread = threading.Thread(target=self.agent.run_full_report, daemon=True)
             initial_full_report_thread.start()
         except Exception as e:

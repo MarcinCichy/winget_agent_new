@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, abort, current_app, url_for, send_from_directory, flash
 from functools import wraps
 from .db import DatabaseManager
+from .services import AgentVersionService
 import os
 import json
 
@@ -206,6 +207,29 @@ def download_latest_agent():
     builds_dir = os.path.join(current_app.root_path, '..', 'agent_builds')
     current_app.logger.info(f"Próba serwowania pliku agent.exe z katalogu: {builds_dir}")
     return send_from_directory(builds_dir, 'agent.exe', as_attachment=True)
+
+
+@bp.route('/agent/latest_info', methods=['GET'])
+@require_api_key
+def get_latest_agent_info():
+    """Zwraca informacje o najnowszej wersji agenta dostępnej na serwerze."""
+    try:
+        version_service = AgentVersionService()
+        server_info = version_service.get_server_agent_info()
+
+        if not server_info.get('file_exists'):
+            return jsonify({"error": "Agent file not found on server"}), 404
+
+        base_url = request.host_url.strip('/')
+        download_url = f"{base_url}{url_for('api.download_latest_agent')}"
+
+        return jsonify({
+            "latest_version": server_info.get('version'),
+            "download_url": download_url
+        })
+    except Exception as e:
+        current_app.logger.error(f"Błąd podczas pobierania info o agencie: {e}")
+        return jsonify({"error": "Internal server error"}), 500
 
 
 @bp.route('/computer/<int:computer_id>/agent_update', methods=['POST'])
