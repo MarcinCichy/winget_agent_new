@@ -26,6 +26,10 @@ def receive_report():
         return "Bad Request", 400
     db_manager = DatabaseManager()
     computer_id = db_manager.save_report(data)
+
+    if computer_id:
+        db_manager.cleanup_scheduled_tasks(computer_id)
+
     if computer_id:
         apps_still_needing_update = {
             update['id'] for update in data.get('available_app_updates', [])

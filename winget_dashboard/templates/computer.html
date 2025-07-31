@@ -65,7 +65,7 @@
                         <span class="status-{{ 'pending' if 'niepowodzenie' not in task.status and 'błąd' not in task.status else 'fail' }}">
                             {{ task.status | replace('_', ' ') | capitalize }}
                         </span>
-                        {% if 'niepowodzenie' in task.status or 'błąd' in task.status %}
+                        {% if 'niepowodzenie' in task.status or 'błąd' in task.status or 'zakończone' in task.status %}
                             <button class="action-btn-link details-btn" data-task-id="{{ task.id }}">(pokaż szczegóły)</button>
                         {% endif %}
                     {% else %}
@@ -127,7 +127,7 @@
                             <span class="status-{{ 'pending' if 'niepowodzenie' not in task.status and 'błąd' not in task.status else 'fail' }}">
                                 {{ task.status | replace('_', ' ') | capitalize }}
                             </span>
-                            {% if 'niepowodzenie' in task.status or 'błąd' in task.status %}
+                            {% if 'niepowodzenie' in task.status or 'błąd' in task.status or 'zakończone' in task.status %}
                                 <button class="action-btn-link details-btn" data-task-id="{{ task.id }}">(pokaż szczegóły)</button>
                             {% endif %}
                         {% endif %}

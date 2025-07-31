@@ -113,7 +113,6 @@ class DatabaseManager:
         logging.info(f"Zaktualizowano status self-update dla {hostname} na: {status}")
 
     def update_computer_status_from_heartbeat(self, data):
-        """Aktualizuje tylko podstawowe dane komputera na podstawie sygnału heartbeat, nie tworząc nowego raportu."""
         hostname = data.get('hostname')
         if not hostname:
             return
@@ -314,6 +313,16 @@ class DatabaseManager:
     def delete_computer(self, computer_id):
         self._execute("DELETE FROM computers WHERE id = ?", (computer_id,), commit=True)
         logging.info(f"Usunięto komputer o ID: {computer_id}")
+
+    def cleanup_scheduled_tasks(self, computer_id):
+        """Zmienia status 'zaplanowane_na_logowanie' na 'zakończone_po_restarcie' dla danego komputera."""
+        details_text = "Zadanie zakończone automatycznie po otrzymaniu nowego raportu (wynik na kliencie nieznany)."
+        self._execute(
+            "UPDATE tasks SET status = 'zakończone_po_restarcie', result_details = ? WHERE computer_id = ? AND status = 'zaplanowane_na_logowanie'",
+            (details_text, computer_id),
+            commit=True
+        )
+        logging.info(f"Wyczyszczono przestarzałe 'zaplanowane' zadania dla komputera ID: {computer_id}")
 
     def get_pending_updates_for_computer(self, computer_id):
         """Pobiera listę wszystkich oczekujących aktualizacji (aplikacji i OS) dla danego komputera z ostatniego raportu."""
