@@ -207,7 +207,7 @@ class Agent:
                 logging.error(f"Nie znaleziono pliku ui_helper.exe w oczekiwanej lokalizacji: {ui_helper_path}")
                 return
 
-            task_name = "WingetDashboardUIHelper"
+            task_name = "Winget Dashboard UI Helper"
 
             check_command = f'schtasks /query /TN "{task_name}"'
             result = CommandRunner.run(check_command)

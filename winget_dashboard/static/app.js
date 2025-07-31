@@ -420,7 +420,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // === NOWY KOD DLA PRZYCISKU "AKTUALIZUJ WSZYSTKO" ===
+    // === Logika dla przycisku "Aktualizuj wszystko" ===
     document.querySelectorAll('.update-all-btn').forEach(button => {
         button.addEventListener('click', function(e) {
             e.preventDefault();
@@ -440,7 +440,6 @@ document.addEventListener('DOMContentLoaded', () => {
             .then(response => response.json())
             .then(data => {
                 if (data.status === 'success') {
-                    // Przeładowanie strony spowoduje, że statusy zadań się pojawią
                     forceReload();
                 } else {
                     throw new Error(data.message || 'Nie udało się zlecić zadań.');
