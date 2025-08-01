@@ -86,10 +86,11 @@ class AgentGenerator:
             error_definitions_path = os.path.join(current_app.root_path, '..', 'error_definitions.json')
             with open(error_definitions_path, 'r', encoding='utf-8') as f:
                 errors_obj = json.load(f)
-                errors_json_string = json.dumps(errors_obj)
+                # Konwertujemy obiekt Pythona na jego reprezentację tekstową w kodzie
+                errors_code_string = str(errors_obj)
         except (FileNotFoundError, json.JSONDecodeError) as e:
             logging.error(f"Nie udało się załadować pliku error_definitions.json: {e}")
-            errors_json_string = "[]"
+            errors_code_string = "[]"
 
         final_agent_code = self.template \
             .replace('__API_ENDPOINT_1__', config.get('api_endpoint_1', '')) \
@@ -98,12 +99,8 @@ class AgentGenerator:
             .replace('__AGENT_VERSION__', agent_version) \
             .replace('__LOOP_INTERVAL__', str(config.get('loop_interval', 60))) \
             .replace('__REPORT_INTERVAL__', str(config.get('report_interval', 3600))) \
-            .replace('__WINGET_PATH__', winget_path)
-
-        final_agent_code = final_agent_code.replace(
-            '__ERROR_DEFINITIONS_JSON__',
-            json.dumps(errors_json_string)
-        )
+            .replace('__WINGET_PATH__', winget_path) \
+            .replace('__ERROR_DEFINITIONS_JSON__', errors_code_string)
 
         build_dir = tempfile.mkdtemp(prefix="winget-agent-build-")
         script_path = os.path.join(build_dir, "agent_service.py")

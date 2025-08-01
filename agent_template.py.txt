@@ -237,25 +237,35 @@ class Agent:
         self.last_light_report_time = 0
         self.winget_version, self.agent_mode = self._determine_winget_mode()
         self.winget_manager = WingetManager(self.agent_mode)
+        # Wstrzyknięta wartość to obiekt Pythona, nie trzeba go parsować
+        self.error_definitions = ERROR_DEFINITIONS_JSON
+
+    def _run_command_as_user(self, command):
+        """Pomocnicza metoda do uruchamiania poleceń przez UiClient i parsowania wyniku."""
+        response_str = UiClient.send_request({"type": "execute_command", "command": command})
+        if response_str in ["no_response", "no_helper", "error"]:
+            return None
         try:
-            # Wstrzyknięty string jest już stringiem JSON, więc musimy go sparsować dwa razy
-            self.error_definitions = json.loads(ERROR_DEFINITIONS_JSON)
-        except json.JSONDecodeError:
-            logging.error("Nie udało się załadować definicji błędów!")
-            self.error_definitions = []
+            response = json.loads(response_str)
+            if response.get("status") == "success":
+                return response.get("details", "")
+        except (json.JSONDecodeError, TypeError):
+            return None
+        return None
 
     def _determine_winget_mode(self):
-        """Sprawdza wersję winget i decyduje o trybie pracy agenta."""
-        logging.info("Sprawdzanie wersji i możliwości winget...")
-        result = CommandRunner.run("winget --version")
-        version = "N/A"
-        if result and result.returncode == 0 and result.stdout:
-            match = re.search(r'v(\d+\.\d+\.\d+)', result.stdout)
-            if match:
-                version = match.group(1)
+        """Sprawdza wersję winget i decyduje o trybie pracy agenta, działając w kontekście użytkownika."""
+        logging.info("Sprawdzanie wersji i możliwości winget w kontekście użytkownika...")
 
-        test_result = CommandRunner.run("winget list --help")
-        if test_result and test_result.returncode == 0 and "--json" in test_result.stdout:
+        version_output = self._run_command_as_user("winget --version")
+        version = "N/A"
+        if version_output:
+            match = re.search(r'v(\d+\.\d+\..*?\d+)', version_output)
+            if match:
+                version = match.group(1).strip()
+
+        help_output = self._run_command_as_user("winget list --help")
+        if help_output and "--json" in help_output:
             logging.info(f"Wykryto winget w wersji {version}. Agent będzie pracował w trybie JSON.")
             return version, "json"
         else:
@@ -317,7 +327,7 @@ class Agent:
         try:
             logging.info("Rozpoczynanie pełnego raportu...")
             logging.info("Aktualizowanie źródeł winget...")
-            UiClient.send_request({"type": "execute_command", "command": "winget source update"})
+            self._run_command_as_user("winget source update")
             logging.info("Zakończono aktualizację źródeł winget.")
 
             self.blacklist = self.api_client.get_blacklist(self.hostname)
