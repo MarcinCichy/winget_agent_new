@@ -155,7 +155,6 @@ def computer_details(hostname):
     details = db_manager.get_computer_details(hostname)
     if not details: abort(404)
     details['editable_blacklist'] = db_manager.get_computer_blacklist(hostname)
-    details['task_statuses'] = db_manager.get_computer_tasks(details['computer']['id'])
     return render_template('computer.html', **details)
 
 

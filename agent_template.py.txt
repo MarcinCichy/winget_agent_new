@@ -361,7 +361,12 @@ class Agent:
                 self.api_client.send_task_result(task_id, 'zakończone', details)
                 task_was_successful = True
             else:
-                if details and ("no available upgrade found" in details.lower() or "no newer package versions are available" in details.lower()):
+                if details and "the install technology is different" in details.lower():
+                    logging.warning(f"Zadanie {task_id} dla '{payload}' wymaga reinstalacji (inna technologia instalatora).")
+                    error_message = "Aktualizacja nie jest możliwa, ponieważ technologia instalatora nowej wersji jest inna. Wymagana jest ręczna deinstalacja i ponowna instalacja."
+                    self.api_client.send_task_result(task_id, 'niepowodzenie_inna_technologia', error_message)
+                    UiClient.send_request({"type": "info", "title": "Wymagana akcja manualna", "message": f"Aktualizacja aplikacji '{payload}' wymaga ręcznej reinstalacji (deinstalacja, a następnie instalacja nowej wersji)."})
+                elif details and ("no available upgrade found" in details.lower() or "no newer package versions are available" in details.lower()):
                     logging.info(f"Zadanie {task_id} dla '{payload}' zgłosiło, że pakiet jest już aktualny. Oznaczam jako zakończone.")
                     self.api_client.send_task_result(task_id, 'zakończone', "Pakiet był już w najnowszej wersji.")
                     task_was_successful = True

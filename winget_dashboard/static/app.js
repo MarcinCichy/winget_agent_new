@@ -159,9 +159,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const closeBtn = modal.querySelector('.close-btn');
         const errorContent = document.getElementById('error-details-content');
 
-        document.querySelectorAll('.details-btn').forEach(button => {
-            button.addEventListener('click', function() {
-                const taskId = this.dataset.taskId;
+        document.body.addEventListener('click', function(e) {
+            if (e.target.matches('.details-btn')) {
+                const taskId = e.target.dataset.taskId;
                 fetch(`/api/task_status/${taskId}`)
                     .then(response => response.json())
                     .then(data => {
@@ -175,7 +175,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             alert('Brak szczegółów błędu dla tego zadania.');
                         }
                     });
-            });
+            }
         });
 
         closeBtn.onclick = () => { modal.style.display = 'none'; };
@@ -453,4 +453,65 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
     });
+
+    const fetchAndRenderTaskStatuses = () => {
+        const refreshBtn = document.querySelector('.refresh-btn[data-computer-id]');
+        if (!refreshBtn) return;
+        const computerId = refreshBtn.dataset.computerId;
+
+        fetch(`/api/computer/${computerId}/tasks`)
+            .then(response => {
+                if (!response.ok) throw new Error('Nie udało się pobrać statusów zadań.');
+                return response.json();
+            })
+            .then(tasks => {
+                document.querySelectorAll('tr[data-package-id]').forEach(row => {
+                    const packageId = row.dataset.packageId;
+                    const task = tasks[packageId];
+                    if (!task) return;
+
+                    const statusCell = row.querySelector('.task-status');
+                    const actionCell = row.querySelector('.task-action');
+                    const isAppsTable = !!row.querySelector('.uninstall-btn');
+                    const isUninstallTask = task.command.includes('uninstall');
+
+                    if (isAppsTable && !isUninstallTask) {
+                        return;
+                    }
+
+                    if (statusCell) {
+                        const isErrorStatus = task.status.includes('niepowodzenie') || task.status.includes('błąd');
+                        const statusClass = isErrorStatus ? 'fail' : 'pending';
+                        const statusTextRaw = task.status.replace(/_/g, ' ');
+                        const statusText = statusTextRaw.charAt(0).toUpperCase() + statusTextRaw.slice(1);
+
+                        let statusHtml = `<span class="status-${statusClass}">${statusText}</span>`;
+                        const hasDetails = isErrorStatus || task.status === 'zakończone';
+
+                        if (hasDetails) {
+                            statusHtml += ` <button class="action-btn-link details-btn" data-task-id="${task.id}">(pokaż szczegóły)</button>`;
+                        }
+                        statusCell.innerHTML = statusHtml;
+                    }
+
+                    if (actionCell) {
+                        const activeStatuses = ['oczekuje', 'w_trakcie_wykonywania', 'oczekuje_na_uzytkownika', 'w_trakcie_aktualizacji', 'zaplanowane_na_logowanie'];
+                        if (activeStatuses.includes(task.status)) {
+                            const actionGroup = actionCell.querySelector('.action-group');
+                            if (actionGroup) actionGroup.remove();
+                        }
+                    }
+                });
+            })
+            .catch(error => {
+                console.error('Błąd podczas ładowania statusów zadań:', error);
+                const notificationBar = document.getElementById('notification-bar');
+                if (notificationBar) {
+                    notificationBar.textContent = 'Nie udało się załadować statusów zadań. Odśwież stronę.';
+                    notificationBar.style.backgroundColor = '#dc3545';
+                    notificationBar.style.display = 'block';
+                }
+            });
+    };
+    fetchAndRenderTaskStatuses();
 });

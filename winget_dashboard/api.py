@@ -102,6 +102,13 @@ def request_refresh(computer_id):
     return jsonify({"status": "success", "message": "Zadanie odświeżenia zlecone", "task_id": task_id})
 
 
+@bp.route('/computer/<int:computer_id>/tasks', methods=['GET'])
+def get_computer_tasks(computer_id):
+    db_manager = DatabaseManager()
+    tasks = db_manager.get_computer_tasks(computer_id)
+    return jsonify(tasks)
+
+
 @bp.route('/computer/<int:computer_id>/update', methods=['POST'])
 def request_update(computer_id):
     data = request.get_json()
