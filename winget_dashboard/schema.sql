@@ -1,3 +1,5 @@
+-- Plik: winget_dashboard/schema.sql
+
 DROP TABLE IF EXISTS computers;
 DROP TABLE IF EXISTS reports;
 DROP TABLE IF EXISTS applications;
@@ -8,12 +10,15 @@ CREATE TABLE computers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     hostname TEXT UNIQUE NOT NULL,
     ip_address TEXT,
-    reboot_required BOOLEAN DEFAULT FALSE,
     last_report TIMESTAMP,
-    blacklist_keywords TEXT,
+    reboot_required BOOLEAN DEFAULT 0,
     agent_version TEXT,
+    blacklist_keywords TEXT,
     last_agent_update_status TEXT,
-    last_agent_update_ts TIMESTAMP
+    last_agent_update_ts TIMESTAMP,
+    -- NOWE POLA --
+    winget_version TEXT,
+    agent_mode TEXT -- 'json' lub 'text'
 );
 
 CREATE TABLE reports (
@@ -28,7 +33,7 @@ CREATE TABLE applications (
     report_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     version TEXT,
-    app_id TEXT NOT NULL,
+    app_id TEXT,
     FOREIGN KEY (report_id) REFERENCES reports (id) ON DELETE CASCADE
 );
 
@@ -39,7 +44,7 @@ CREATE TABLE updates (
     app_id TEXT,
     current_version TEXT,
     available_version TEXT,
-    update_type TEXT NOT NULL, -- 'OS' or 'APP'
+    update_type TEXT, -- 'APP' lub 'OS'
     FOREIGN KEY (report_id) REFERENCES reports (id) ON DELETE CASCADE
 );
 
@@ -48,7 +53,7 @@ CREATE TABLE tasks (
     computer_id INTEGER NOT NULL,
     command TEXT NOT NULL,
     payload TEXT,
-    status TEXT DEFAULT 'oczekuje',
+    status TEXT DEFAULT 'oczekuje', -- np. oczekuje, w toku, zakończone, błąd
     result_details TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

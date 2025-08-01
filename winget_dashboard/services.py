@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import tempfile
 import logging
+import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from flask import current_app
@@ -81,6 +82,15 @@ class AgentGenerator:
         agent_version = config.get('agent_version', '0.0.0')
         winget_path = config.get('winget_path', '').replace('\\', '\\\\')
 
+        try:
+            error_definitions_path = os.path.join(current_app.root_path, '..', 'error_definitions.json')
+            with open(error_definitions_path, 'r', encoding='utf-8') as f:
+                errors_obj = json.load(f)
+                errors_json_string = json.dumps(errors_obj)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            logging.error(f"Nie udało się załadować pliku error_definitions.json: {e}")
+            errors_json_string = "[]"
+
         final_agent_code = self.template \
             .replace('__API_ENDPOINT_1__', config.get('api_endpoint_1', '')) \
             .replace('__API_ENDPOINT_2__', config.get('api_endpoint_2', '')) \
@@ -89,6 +99,11 @@ class AgentGenerator:
             .replace('__LOOP_INTERVAL__', str(config.get('loop_interval', 60))) \
             .replace('__REPORT_INTERVAL__', str(config.get('report_interval', 3600))) \
             .replace('__WINGET_PATH__', winget_path)
+
+        final_agent_code = final_agent_code.replace(
+            '__ERROR_DEFINITIONS_JSON__',
+            json.dumps(errors_json_string)
+        )
 
         build_dir = tempfile.mkdtemp(prefix="winget-agent-build-")
         script_path = os.path.join(build_dir, "agent_service.py")
@@ -130,7 +145,8 @@ class ReportGenerator:
         hostname, ip_address = report_info['hostname'], report_info['ip_address']
         content = [f"# RAPORT DLA KOMPUTERA: {hostname} ({ip_address})"]
 
-        report_time = report_info['report_timestamp'] if 'report_timestamp' in report_info.keys() else report_info['last_report']
+        report_time = report_info['report_timestamp'] if 'report_timestamp' in report_info.keys() else report_info[
+            'last_report']
         content.append(f"Data raportu: {self._to_local_time(report_time)}")
         content.append(
             f"Data wygenerowania pliku: {datetime.now(ZoneInfo('Europe/Warsaw')).strftime('%Y-%m-%d %H:%M:%S')}\n")

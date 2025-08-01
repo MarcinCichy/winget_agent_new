@@ -4,3 +4,4 @@ python-dotenv
 pywin32
 pyinstaller
 tzdata
+requests

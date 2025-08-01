@@ -8,6 +8,7 @@ import subprocess
 import requests
 import threading
 import struct
+import re
 
 import servicemanager
 import win32serviceutil
@@ -21,8 +22,9 @@ API_KEY = "__API_KEY__"
 AGENT_VERSION = "__AGENT_VERSION__"
 LOOP_INTERVAL = int("__LOOP_INTERVAL__")
 REPORT_INTERVAL = int("__REPORT_INTERVAL__")
-LIGHT_REPORT_INTERVAL = 300  # 5 minut
+LIGHT_REPORT_INTERVAL = 300
 WINGET_PATH_CONF = r"__WINGET_PATH__"
+ERROR_DEFINITIONS_JSON = __ERROR_DEFINITIONS_JSON__
 
 # --- Klasy logiki ---
 
@@ -53,31 +55,25 @@ class UiClient:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(3600)
                 s.connect((UiClient.HOST, UiClient.PORT))
-
                 request_bytes = json.dumps(request_data).encode('utf-8')
                 s.sendall(struct.pack('>I', len(request_bytes)))
                 s.sendall(request_bytes)
-
                 header_bytes = s.recv(4)
                 if not header_bytes: return "no_response"
                 msg_len = struct.unpack('>I', header_bytes)[0]
-
                 chunks = []
                 bytes_recd = 0
                 while bytes_recd < msg_len:
                     chunk = s.recv(min(msg_len - bytes_recd, 4096))
-                    if not chunk:
-                        raise RuntimeError("Połączenie zostało przerwane w trakcie odbierania danych")
+                    if not chunk: raise RuntimeError("Połączenie zostało przerwane")
                     chunks.append(chunk)
                     bytes_recd += len(chunk)
-
                 return b''.join(chunks).decode('utf-8')
-
         except socket.timeout:
             logging.error("Timeout podczas oczekiwania na odpowiedź od Pomocnika UI.")
             return "no_response"
         except ConnectionRefusedError:
-            logging.warning("Odmowa połączenia z Pomocnikiem UI. Prawdopodobnie żaden użytkownik nie jest zalogowany.")
+            logging.warning("Odmowa połączenia z Pomocnikiem UI.")
             return "no_helper"
         except Exception as e:
             logging.error(f"Błąd komunikacji z Pomocnikiem UI: {e}", exc_info=True)
@@ -106,10 +102,29 @@ class ApiClient:
     def send_heartbeat(self, data): self._request('post', '/api/agent/heartbeat', data=json.dumps(data))
 
 class WingetManager:
-    def __init__(self, winget_path_conf=""):
-        logging.info("WingetManager został zainicjowany w trybie delegowania do UiClient.")
+    def __init__(self, agent_mode):
+        self.mode = agent_mode
+        logging.info(f"WingetManager zainicjowany w trybie: '{self.mode}'")
 
-    def _parse_winget_output(self, result_obj_stdout):
+    def _get_winget_data_from_ui(self, command):
+        request_data = {"type": "execute_command", "command": command}
+        response_json_str = UiClient.send_request(request_data)
+        try:
+            if response_json_str in ["no_response", "no_helper", "error"]:
+                logging.warning(f"Nie udało się uzyskać danych od pomocnika UI. Status: {response_json_str}")
+                return None
+
+            outer_response = json.loads(response_json_str)
+            if outer_response.get('status') == 'success':
+                return outer_response.get('details', '')
+            else:
+                logging.error(f"Pomocnik UI zwrócił błąd: {outer_response.get('details')}")
+                return None
+        except (json.JSONDecodeError, TypeError) as e:
+            logging.error(f"Błąd przetwarzania odpowiedzi od Pomocnika UI: {e}")
+            return None
+
+    def _parse_text_output(self, result_obj_stdout):
         if not result_obj_stdout: return []
         apps, header_line, header_indices = [], "", {}
         for line in result_obj_stdout.strip().split('\n'):
@@ -120,6 +135,7 @@ class WingetManager:
                     header_indices['id_end'] = header_line.index("Version")
                     header_indices['version_end'] = header_line.index("Available") if "Available" in header_line else len(header_line)
                 except ValueError: continue
+                continue
             if not header_indices or line.startswith('---') or not line.strip(): continue
             try:
                 name = line[:header_indices['name_end']].strip()
@@ -131,33 +147,58 @@ class WingetManager:
             except (ValueError, IndexError) as e: logging.warning(f"Pominięto linię winget: {line} | Błąd: {e}")
         return apps
 
-    def _get_winget_data(self, command):
-        request_data = {"type": "execute_command", "command": command}
-        response_json = UiClient.send_request(request_data)
-        try:
-            if response_json in ["no_response", "no_helper", "error"]:
-                 logging.warning(f"Nie udało się uzyskać danych od pomocnika UI dla polecenia '{command}'. Status: {response_json}")
-                 return None
-            response = json.loads(response_json)
-            if response.get('status') == 'success':
-                return response.get('details', '')
-            else:
-                logging.error(f"Pomocnik UI zwrócił błąd dla polecenia '{command}': {response.get('details')}")
-                return None
-        except (json.JSONDecodeError, TypeError):
-            logging.error(f"Nie udało się przetworzyć odpowiedzi od Pomocnika UI: {response_json}")
-            return None
-
     def get_installed_apps(self, blacklist):
-        stdout = self._get_winget_data("winget list --accept-source-agreements --disable-interactivity")
-        if not stdout: return []
-        all_apps = self._parse_winget_output(stdout)
-        return [app for app in all_apps if not any(keyword.lower() in app['name'].lower() for keyword in blacklist)]
+        if self.mode == 'json':
+            command = "winget list --json --accept-source-agreements --disable-interactivity"
+            winget_output = self._get_winget_data_from_ui(command)
+            if not winget_output: return []
+            try:
+                if winget_output.strip().startswith('{') and winget_output.strip().endswith('}'):
+                    valid_json_str = '[' + winget_output.strip().replace('}{', '},{') + ']'
+                    raw_data = json.loads(valid_json_str)
+                else:
+                    raw_data = json.loads(winget_output)
+                apps = []
+                data_list = raw_data.get('data', raw_data) if isinstance(raw_data, dict) else raw_data
+                for item in data_list:
+                    app = {"name": item.get("Name"), "id": item.get("Id"), "version": item.get("Version")}
+                    if app['name'] and app['id'] and not any(keyword.lower() in app['name'].lower() for keyword in blacklist):
+                        apps.append(app)
+                return apps
+            except (json.JSONDecodeError, AttributeError) as e:
+                logging.error(f"Błąd parsowania JSON dla 'list': {e}")
+                return []
+        else: # Tryb 'text'
+            command = "winget list --accept-source-agreements --disable-interactivity"
+            winget_output = self._get_winget_data_from_ui(command)
+            all_apps = self._parse_text_output(winget_output)
+            return [app for app in all_apps if not any(keyword.lower() in app['name'].lower() for keyword in blacklist)]
 
     def get_available_updates(self):
-        stdout = self._get_winget_data("winget upgrade --accept-source-agreements --disable-interactivity --include-unknown")
-        if not stdout: return []
-        return self._parse_winget_output(stdout)
+        if self.mode == 'json':
+            command = "winget upgrade --json --accept-source-agreements --disable-interactivity --include-unknown"
+            winget_output = self._get_winget_data_from_ui(command)
+            if not winget_output: return []
+            try:
+                if winget_output.strip().startswith('{') and winget_output.strip().endswith('}'):
+                    valid_json_str = '[' + winget_output.strip().replace('}{', '},{') + ']'
+                    raw_data = json.loads(valid_json_str)
+                else:
+                    raw_data = json.loads(winget_output)
+                updates = []
+                data_list = raw_data.get('data', raw_data) if isinstance(raw_data, dict) else raw_data
+                for item in data_list:
+                    update = {"name": item.get("Name"), "id": item.get("Id"), "version": item.get("Version"), "available_version": item.get("AvailableVersion")}
+                    if update['name'] and update['id']:
+                        updates.append(update)
+                return updates
+            except (json.JSONDecodeError, AttributeError) as e:
+                logging.error(f"Błąd parsowania JSON dla 'upgrade': {e}")
+                return []
+        else: # Tryb 'text'
+            command = "winget upgrade --accept-source-agreements --disable-interactivity --include-unknown"
+            winget_output = self._get_winget_data_from_ui(command)
+            return self._parse_text_output(winget_output)
 
 class SystemInfo:
     @staticmethod
@@ -190,11 +231,36 @@ class Agent:
     def __init__(self):
         self.hostname = SystemInfo.get_hostname()
         self.api_client = ApiClient(API_ENDPOINTS, API_KEY)
-        self.winget_manager = WingetManager(WINGET_PATH_CONF)
         self.version = AGENT_VERSION
         self.blacklist = []
         self.last_full_report_time = 0
         self.last_light_report_time = 0
+        self.winget_version, self.agent_mode = self._determine_winget_mode()
+        self.winget_manager = WingetManager(self.agent_mode)
+        try:
+            # Wstrzyknięty string jest już stringiem JSON, więc musimy go sparsować dwa razy
+            self.error_definitions = json.loads(ERROR_DEFINITIONS_JSON)
+        except json.JSONDecodeError:
+            logging.error("Nie udało się załadować definicji błędów!")
+            self.error_definitions = []
+
+    def _determine_winget_mode(self):
+        """Sprawdza wersję winget i decyduje o trybie pracy agenta."""
+        logging.info("Sprawdzanie wersji i możliwości winget...")
+        result = CommandRunner.run("winget --version")
+        version = "N/A"
+        if result and result.returncode == 0 and result.stdout:
+            match = re.search(r'v(\d+\.\d+\.\d+)', result.stdout)
+            if match:
+                version = match.group(1)
+
+        test_result = CommandRunner.run("winget list --help")
+        if test_result and test_result.returncode == 0 and "--json" in test_result.stdout:
+            logging.info(f"Wykryto winget w wersji {version}. Agent będzie pracował w trybie JSON.")
+            return version, "json"
+        else:
+            logging.warning(f"Wykryto winget w wersji {version}, która nie wspiera --json. Agent będzie pracował w trybie rezerwowym (text).")
+            return version, "text"
 
     def _ensure_ui_helper_autostart(self):
         """Upewnia się, że zadanie autostartu dla ui_helper.exe istnieje w Harmonogramie Zadań."""
@@ -237,7 +303,9 @@ class Agent:
                 "hostname": self.hostname,
                 "ip_address": SystemInfo.get_active_ip(),
                 "agent_version": self.version,
-                "reboot_required": SystemInfo.is_reboot_required()
+                "reboot_required": SystemInfo.is_reboot_required(),
+                "winget_version": self.winget_version,
+                "agent_mode": self.agent_mode
             }
             self.api_client.send_heartbeat(heartbeat_data)
             self.last_light_report_time = time.time()
@@ -248,8 +316,8 @@ class Agent:
         """Wysyła pełny, czasochłonny raport ze wszystkimi danymi."""
         try:
             logging.info("Rozpoczynanie pełnego raportu...")
-            logging.info("Aktualizowanie źródeł winget przed wygenerowaniem raportu...")
-            self.winget_manager._get_winget_data("winget source update")
+            logging.info("Aktualizowanie źródeł winget...")
+            UiClient.send_request({"type": "execute_command", "command": "winget source update"})
             logging.info("Zakończono aktualizację źródeł winget.")
 
             self.blacklist = self.api_client.get_blacklist(self.hostname)
@@ -260,7 +328,9 @@ class Agent:
                 "reboot_required": SystemInfo.is_reboot_required(),
                 "installed_apps": self.winget_manager.get_installed_apps(self.blacklist),
                 "available_app_updates": self.winget_manager.get_available_updates(),
-                "pending_os_updates": SystemInfo.get_pending_os_updates()
+                "pending_os_updates": SystemInfo.get_pending_os_updates(),
+                "winget_version": self.winget_version,
+                "agent_mode": self.agent_mode
             }
             self.api_client.send_report(report_data)
             self.last_full_report_time = time.time()
@@ -361,32 +431,36 @@ class Agent:
                 self.api_client.send_task_result(task_id, 'zakończone', details)
                 task_was_successful = True
             else:
-                if details and "the install technology is different" in details.lower():
-                    logging.warning(f"Zadanie {task_id} dla '{payload}' wymaga reinstalacji (inna technologia instalatora).")
-                    error_message = "Aktualizacja nie jest możliwa, ponieważ technologia instalatora nowej wersji jest inna. Wymagana jest ręczna deinstalacja i ponowna instalacja."
-                    self.api_client.send_task_result(task_id, 'niepowodzenie_inna_technologia', error_message)
-                    UiClient.send_request({"type": "info", "title": "Wymagana akcja manualna", "message": f"Aktualizacja aplikacji '{payload}' wymaga ręcznej reinstalacji (deinstalacja, a następnie instalacja nowej wersji)."})
-                elif details and ("no available upgrade found" in details.lower() or "no newer package versions are available" in details.lower()):
-                    logging.info(f"Zadanie {task_id} dla '{payload}' zgłosiło, że pakiet jest już aktualny. Oznaczam jako zakończone.")
-                    self.api_client.send_task_result(task_id, 'zakończone', "Pakiet był już w najnowszej wersji.")
-                    task_was_successful = True
-                elif details and "the package cannot be upgraded using winget" in details.lower():
-                    logging.warning(f"Zadanie {task_id} dla '{payload}' nie powiodło się, ponieważ pakiet wymaga własnego mechanizmu aktualizacji.")
-                    self.api_client.send_task_result(task_id, 'niepowodzenie_wlasny_updater', "Pakiet wymaga aktualizacji przez mechanizm dostarczony przez wydawcę.")
-                    UiClient.send_request({"type": "info", "title": "Wymagana akcja manualna", "message": f"Aktualizacja aplikacji '{payload}' nie może być wykonana automatycznie.\n\nProsimy o ręczne uruchomienie tej aplikacji i skorzystanie z jej wbudowanego mechanizmu aktualizacji."})
-                elif details and "installer failed with exit code: 1603" in details.lower():
-                    logging.error(f"Zadanie {task_id} dla '{payload}' nie powiodło się z kodem błędu instalatora 1603.")
-                    error_message = "Instalator MSI zwrócił kod błędu 1603 (Błąd krytyczny). Może to oznaczać, że aplikacja jest w użyciu lub wystąpił inny problem. Sprawdź logi winget na komputerze klienckim."
-                    self.api_client.send_task_result(task_id, 'niepowodzenie_kod_1603', error_message)
-                    UiClient.send_request({"type": "info", "title": "Błąd instalacji aplikacji", "message": f"Automatyczna aktualizacja aplikacji '{payload}' nie powiodła się z powodu błędu instalatora (kod 1603). Prosimy o próbę ręcznej instalacji."})
-                elif details and "application is currently running" in details.lower():
-                    logging.info(f"Wykryto, że aplikacja '{payload}' jest uruchomiona. Automatycznie planuję zadanie na następne logowanie.")
-                    UiClient.send_request({"type": "info", "title": "Aktualizacja odroczona", "message": f"Aplikacja '{payload}' jest w użyciu. Aktualizacja została automatycznie zaplanowana na następne logowanie."})
-                    self.api_client.send_task_result(task_id, 'odroczone_aplikacja_uruchomiona', details)
-                    self._schedule_task_on_logon(task_id, base_command, payload)
-                else:
-                    self.api_client.send_task_result(task_id, 'niepowodzenie_interwencja_uzytkownika', details)
-                    UiClient.send_request({"type": "info", "title": "Automatyzacja nie powiodła się", "message": f"Automatyczna {action_type_for_msg} '{payload if payload != 'os_update' else ''}' nie powiodła się. Prosimy o ręczne wykonanie tej operacji."})
+                error_handled = False
+                details_lower = (details or "").lower()
+
+                for error_def in self.error_definitions:
+                    if error_def.get("check_type") == "details_contains" and error_def.get("check_value") in details_lower:
+                        logging.warning(f"Zadanie {task_id} dla '{payload}' obsłużone przez regułę '{error_def['report_status']}'")
+                        self.api_client.send_task_result(task_id, error_def['report_status'], error_def['report_details'])
+
+                        if error_def.get('notify_user'):
+                            UiClient.send_request({
+                                "type": "info",
+                                "title": error_def.get('user_title', 'Informacja'),
+                                "message": error_def.get('user_message', '').format(payload=payload)
+                            })
+
+                        if error_def['report_status'] == 'zakończone':
+                             task_was_successful = True
+
+                        error_handled = True
+                        break
+
+                if not error_handled:
+                    if "application is currently running" in details_lower:
+                        logging.info(f"Wykryto, że aplikacja '{payload}' jest uruchomiona. Automatycznie planuję zadanie na następne logowanie.")
+                        UiClient.send_request({"type": "info", "title": "Aktualizacja odroczona", "message": f"Aplikacja '{payload}' jest w użyciu. Aktualizacja została automatycznie zaplanowana na następne logowanie."})
+                        self.api_client.send_task_result(task_id, 'odroczone_aplikacja_uruchomiona', details)
+                        self._schedule_task_on_logon(task_id, base_command, payload)
+                    else:
+                        self.api_client.send_task_result(task_id, 'niepowodzenie_interwencja_uzytkownika', details)
+                        UiClient.send_request({"type": "info", "title": "Automatyzacja nie powiodła się", "message": f"Automatyczna {action_type_for_msg} '{payload if payload != 'os_update' else ''}' nie powiodła się. Prosimy o ręczne wykonanie tej operacji."})
 
             if task_was_successful and base_command in ['update', 'uninstall']:
                 logging.info(f"Zadanie {task_id} zakończone sukcesem. Uruchamiam pełny raport w tle w celu odświeżenia stanu.")

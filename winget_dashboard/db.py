@@ -61,9 +61,9 @@ class DatabaseManager:
                                          line.strip()]
                 default_blacklist_str = ", ".join(default_keywords_list)
                 self._execute(
-                    "INSERT INTO computers (hostname, blacklist_keywords, ip_address, reboot_required, agent_version) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO computers (hostname, blacklist_keywords, ip_address, reboot_required, agent_version, winget_version, agent_mode) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (hostname, default_blacklist_str, data.get('ip_address'), data.get('reboot_required', False),
-                     data.get('agent_version')),
+                     data.get('agent_version'), data.get('winget_version'), data.get('agent_mode')),
                     commit=True)
                 computer_cursor = self._execute("SELECT id FROM computers WHERE hostname = ? COLLATE NOCASE",
                                                 (hostname,))
@@ -71,9 +71,9 @@ class DatabaseManager:
 
             computer_id = computer['id']
             self._execute(
-                "UPDATE computers SET ip_address = ?, reboot_required = ?, agent_version = ?, last_report = CURRENT_TIMESTAMP WHERE id = ?",
+                "UPDATE computers SET ip_address = ?, reboot_required = ?, agent_version = ?, winget_version = ?, agent_mode = ?, last_report = CURRENT_TIMESTAMP WHERE id = ?",
                 (data.get('ip_address'), data.get('reboot_required', False), data.get('agent_version', 'N/A'),
-                 computer_id))
+                 data.get('winget_version'), data.get('agent_mode'), computer_id))
 
             report_cursor = self._execute("INSERT INTO reports (computer_id) VALUES (?)", (computer_id,), commit=True)
             report_id = report_cursor.lastrowid
@@ -122,11 +122,15 @@ class DatabaseManager:
                last_report = CURRENT_TIMESTAMP, 
                ip_address = ?, 
                reboot_required = ?, 
-               agent_version = ? 
+               agent_version = ?, 
+               winget_version = ?, 
+               agent_mode = ? 
                WHERE hostname = ? COLLATE NOCASE""",
             (data.get('ip_address'),
              data.get('reboot_required', False),
              data.get('agent_version', 'N/A'),
+             data.get('winget_version'),
+             data.get('agent_mode'),
              hostname),
             commit=True)
         logging.info(f"Odebrano heartbeat od {hostname}. Zaktualizowano status online.")
@@ -135,7 +139,7 @@ class DatabaseManager:
         query = """
         SELECT
             c.id, c.hostname, c.ip_address, c.last_report, c.reboot_required, c.agent_version,
-            c.last_agent_update_status, c.last_agent_update_ts,
+            c.last_agent_update_status, c.last_agent_update_ts, c.winget_version, c.agent_mode,
             IFNULL(upd_counts.app_updates, 0) as app_update_count,
             IFNULL(upd_counts.os_updates, 0) as os_update_count
         FROM

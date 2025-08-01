@@ -1,0 +1,45 @@
+[
+  {
+    "check_type": "details_contains",
+    "check_value": "no available upgrade found",
+    "report_status": "zakończone",
+    "report_details": "Pakiet był już w najnowszej wersji.",
+    "notify_user": false
+  },
+  {
+    "check_type": "details_contains",
+    "check_value": "the install technology is different",
+    "report_status": "niepowodzenie_inna_technologia",
+    "report_details": "Aktualizacja nie jest możliwa, ponieważ technologia instalatora nowej wersji jest inna. Wymagana jest ręczna deinstalacja i ponowna instalacja.",
+    "notify_user": true,
+    "user_title": "Wymagana akcja manualna",
+    "user_message": "Aktualizacja aplikacji '{payload}' wymaga ręcznej reinstalacji (deinstalacja, a następnie instalacja nowej wersji)."
+  },
+  {
+    "check_type": "details_contains",
+    "check_value": "the package cannot be upgraded using winget",
+    "report_status": "niepowodzenie_wlasny_updater",
+    "report_details": "Pakiet wymaga aktualizacji przez mechanizm dostarczony przez wydawcę.",
+    "notify_user": true,
+    "user_title": "Wymagana akcja manualna",
+    "user_message": "Aktualizacja aplikacji '{payload}' nie może być wykonana automatycznie.\n\nProsimy o ręczne uruchomienie tej aplikacji i skorzystanie z jej wbudowanego mechanizmu aktualizacji."
+  },
+  {
+    "check_type": "details_contains",
+    "check_value": "installer failed with exit code: 1223",
+    "report_status": "niepowodzenie_anulowane_uac",
+    "report_details": "Instalator został anulowany, prawdopodobnie z powodu odrzucenia lub braku reakcji na monit systemowy UAC (Kontrola Konta Użytkownika).",
+    "notify_user": true,
+    "user_title": "Instalacja anulowana",
+    "user_message": "Aktualizacja aplikacji '{payload}' została anulowana. Prosimy spróbować ponownie i zaakceptować monit systemowy (UAC), który może się pojawić."
+  },
+  {
+    "check_type": "details_contains",
+    "check_value": "installer failed with exit code: 1603",
+    "report_status": "niepowodzenie_kod_1603",
+    "report_details": "Instalator MSI zwrócił kod błędu 1603 (Błąd krytyczny). Może to oznaczać, że aplikacja jest w użyciu lub wystąpił inny problem.",
+    "notify_user": true,
+    "user_title": "Błąd instalacji aplikacji",
+    "user_message": "Automatyczna aktualizacja aplikacji '{payload}' nie powiodła się z powodu błędu instalatora (kod 1603). Prosimy o próbę ręcznej instalacji."
+  }
+]
