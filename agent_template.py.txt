@@ -313,14 +313,28 @@ class Agent:
             logging.info("Aktualizowanie źródeł winget...")
             self._run_command_as_user("winget source update")
             logging.info("Zakończono aktualizację źródeł winget.")
+
             self.blacklist = self.api_client.get_blacklist(self.hostname)
+
+            # Pobieramy dane z winget
+            installed_apps = self.winget_manager.get_installed_apps(self.blacklist)
+            available_app_updates = self.winget_manager.get_available_updates()
+
+            # Sprawdzamy, czy pobieranie danych z winget się powiodło.
+            # Jeśli nie mamy listy zainstalowanych aplikacji, to jest to oznaka błędu winget.
+            if not installed_apps:
+                logging.error("Nie udało się pobrać listy zainstalowanych aplikacji z Winget. Przerywam wysyłanie pełnego raportu, aby nie nadpisać stanu.")
+                # W takiej sytuacji wysyłamy tylko heartbeat, żeby utrzymać status online
+                self.send_heartbeat()
+                return # Zakończ funkcję bez wysyłania raportu
+
             report_data = {
                 "hostname": self.hostname,
                 "ip_address": SystemInfo.get_active_ip(),
                 "agent_version": self.version,
                 "reboot_required": SystemInfo.is_reboot_required(),
-                "installed_apps": self.winget_manager.get_installed_apps(self.blacklist),
-                "available_app_updates": self.winget_manager.get_available_updates(),
+                "installed_apps": installed_apps,
+                "available_app_updates": available_app_updates,
                 "pending_os_updates": SystemInfo.get_pending_os_updates(),
                 "winget_version": self.winget_version,
                 "agent_mode": self.agent_mode
