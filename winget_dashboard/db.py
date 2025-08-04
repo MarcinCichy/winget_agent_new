@@ -10,9 +10,7 @@ import os
 def get_db():
     if 'db' not in g:
         db_path = current_app.config['DATABASE']
-        # NOWY WARUNEK: Sprawdzamy, czy plik bazy danych istnieje
         if not os.path.exists(db_path):
-            # Jeśli nie, od razu zgłaszamy błąd, zamiast tworzyć pusty plik
             raise sqlite3.OperationalError(f"Plik bazy danych nie istnieje: {db_path}")
 
         g.db = sqlite3.connect(db_path, detect_types=sqlite3.PARSE_DECLTYPES)
@@ -239,7 +237,7 @@ class DatabaseManager:
         AND (
             status = 'oczekuje' 
             OR 
-            (status IN ('w toku', 'w_trakcie_aktualizacji', 'oczekuje_na_uzytkownika') AND updated_at < datetime('now', '-15 minutes'))
+            (status IN ('w toku', 'w_trakcie_wykonywania', 'w_trakcie_aktualizacji', 'oczekuje_na_uzytkownika') AND updated_at < datetime('now', '-15 minutes'))
         )
         """
         tasks = self._execute(query, (computer_id,)).fetchall()
