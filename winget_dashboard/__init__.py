@@ -11,18 +11,39 @@ def create_app(test_config=None):
     """Tworzy i konfiguruje instancję aplikacji Flask."""
     app = Flask(__name__, instance_relative_config=True)
 
-    # Konfiguracja logowania
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
     # Załaduj konfigurację
     from . import config
     app.config.from_object(config.Config)
 
     # Upewnij się, że folder 'instance' istnieje
+    # TO MUSI BYĆ PRZED KONFIGURACJĄ LOGOWANIA, KTÓRE UŻYWA TEGO FOLDERU
     try:
         os.makedirs(app.instance_path)
     except OSError:
         pass
+
+    # =================================================================
+    # <-- PRZENIESIONY BLOK KONFIGURACJI LOGOWANIA -->
+    # Konfiguracja logowania (do pliku i konsoli)
+    # =================================================================
+    root_logger = logging.getLogger()
+    if root_logger.hasHandlers():
+        root_logger.handlers.clear()
+
+    # Definiujemy handlery: jeden dla pliku, drugi dla konsoli
+    log_file = os.path.join(app.instance_path, 'dashboard.log')
+    file_handler = logging.FileHandler(log_file)
+    console_handler = logging.StreamHandler()  # Ten handler odpowiada za wysyłanie logów do konsoli
+
+    # Ustawiamy formatowanie i dodajemy handlery
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            file_handler,
+            console_handler
+        ]
+    )
 
     # Inicjalizacja bazy danych
     from . import db
@@ -62,7 +83,6 @@ def create_app(test_config=None):
             response.headers['Expires'] = '-1'
         return response
 
-    # <-- POCZĄTEK DODANEGO FRAGMENTU -->
     # Dedykowana obsługa błędów bazy danych (np. brakująca kolumna)
     @app.errorhandler(sqlite3.OperationalError)
     def handle_db_operational_error(error):
@@ -73,6 +93,6 @@ def create_app(test_config=None):
         )
         # Zwracamy naszą nową stronę błędu i kod HTTP 500
         return render_template('db_error.html', error=error), 500
-    # <-- KONIEC DODANEGO FRAGMENTU -->
 
+    app.logger.info("Aplikacja Winget Dashboard została pomyślnie uruchomiona.")
     return app

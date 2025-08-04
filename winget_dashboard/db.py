@@ -4,11 +4,18 @@ import click
 from flask import current_app, g
 from flask.cli import with_appcontext
 import json
+import os
 
 
 def get_db():
     if 'db' not in g:
-        g.db = sqlite3.connect(current_app.config['DATABASE'], detect_types=sqlite3.PARSE_DECLTYPES)
+        db_path = current_app.config['DATABASE']
+        # NOWY WARUNEK: Sprawdzamy, czy plik bazy danych istnieje
+        if not os.path.exists(db_path):
+            # Jeśli nie, od razu zgłaszamy błąd, zamiast tworzyć pusty plik
+            raise sqlite3.OperationalError(f"Plik bazy danych nie istnieje: {db_path}")
+
+        g.db = sqlite3.connect(db_path, detect_types=sqlite3.PARSE_DECLTYPES)
         g.db.row_factory = sqlite3.Row
     return g.db
 
