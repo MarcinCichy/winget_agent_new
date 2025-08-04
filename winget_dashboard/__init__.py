@@ -1,9 +1,10 @@
 # winget_dashboard/__init__.py
 import os
-from flask import Flask
+from flask import Flask, render_template
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import logging
+import sqlite3
 
 
 def create_app(test_config=None):
@@ -60,5 +61,18 @@ def create_app(test_config=None):
             response.headers['Pragma'] = 'no-cache'
             response.headers['Expires'] = '-1'
         return response
+
+    # <-- POCZĄTEK DODANEGO FRAGMENTU -->
+    # Dedykowana obsługa błędów bazy danych (np. brakująca kolumna)
+    @app.errorhandler(sqlite3.OperationalError)
+    def handle_db_operational_error(error):
+        """Wyświetla przyjazną stronę błędu, gdy schemat DB jest nieaktualny."""
+        app.logger.critical(
+            f"Wystąpił błąd operacji na bazie danych. Prawdopodobnie schemat jest nieaktualny. Błąd: {error}",
+            exc_info=True
+        )
+        # Zwracamy naszą nową stronę błędu i kod HTTP 500
+        return render_template('db_error.html', error=error), 500
+    # <-- KONIEC DODANEGO FRAGMENTU -->
 
     return app

@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block title %}Błąd Bazy Danych{% endblock %}
+
+{% block header_main_left %}
+    <h1>Winget Dashboard - Błąd Krytyczny</h1>
+{% endblock %}
+
+{% block content %}
+<style>
+    .error-container {
+        max-width: 800px;
+        margin: 4rem auto;
+        padding: 2rem;
+        background-color: var(--kolor-tabeli-tlo);
+        border: 2px solid var(--kolor-bledu);
+        border-radius: 8px;
+        text-align: center;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+    }
+    .error-container h2 {
+        font-size: 2em;
+        color: var(--kolor-bledu);
+        border-bottom: none;
+    }
+    .error-container p {
+        font-size: 1.1em;
+        line-height: 1.6;
+    }
+    .error-details {
+        margin-top: 1.5rem;
+        padding: 1rem;
+        background-color: var(--kolor-tla);
+        border-radius: 4px;
+        font-family: Consolas, "Courier New", monospace;
+        color: var(--kolor-bledu);
+        text-align: left;
+        white-space: pre-wrap;
+        word-break: break-all;
+    }
+    .solution {
+        margin-top: 2rem;
+        padding: 1.5rem;
+        background-color: rgba(255, 193, 7, 0.1);
+        border: 1px solid #ffc107;
+        border-radius: 4px;
+    }
+    .solution h3 {
+        margin-top: 0;
+        color: #ffc107;
+    }
+    .solution code {
+        background-color: var(--kolor-tla);
+        padding: 5px 8px;
+        border-radius: 4px;
+        font-weight: bold;
+    }
+    .warning {
+        font-weight: bold;
+        color: var(--kolor-bledu);
+    }
+</style>
+
+<div class="error-container">
+    <h2>Houston, mamy problem z bazą danych! 🚀</h2>
+    <p>
+        Wygląda na to, że struktura bazy danych (plik <code>winget_dashboard.db</code>)
+        jest nieaktualna i nie pasuje do obecnej wersji kodu aplikacji.
+    </p>
+
+    <h4>Szczegóły techniczne błędu:</h4>
+    <div class="error-details">
+        {{ error }}
+    </div>
+
+    <div class="solution">
+        <h3>Jak to naprawić?</h3>
+        <p>Aby zaktualizować strukturę bazy danych, należy uruchomić polecenie inicjalizujące.</p>
+        <p>W terminalu, w głównym folderze aplikacji, wykonaj komendę:</p>
+        <p><code>flask --app run init-db</code></p>
+        <p class="warning">
+            UWAGA: Uruchomienie tej komendy usunie wszystkie dotychczasowe dane z bazy (komputery, raporty, historię)!
+        </p>
+    </div>
+</div>
+{% endblock %}
