@@ -1,4 +1,4 @@
-# Plik: ui_helper.py (Finalna, poprawiona wersja)
+# Plik: ui_helper.py (OSTATECZNA POPRAWKA)
 
 import socket
 import json
@@ -80,13 +80,14 @@ def run_command_as_user(command_str):
     logging.info(f"Polecenie po przetworzeniu ścieżki: {command_with_full_path}")
 
     try:
-        # --- POPRAWIONA LOGIKA ---
-        # Sprawdzamy, czy wykonujemy polecenie winget, czy wieloliniowy skrypt.
-        if "winget" in command_with_full_path:
-            # Dla poleceń winget z pełną ścieżką w cudzysłowie, operator '&' jest wymagany.
+        # --- OSTATECZNA POPRAWKA: Rozróżnianie poleceń jedno- i wieloliniowych ---
+        # Sprawdzamy, czy wykonujemy polecenie jednowierszowe, czy wieloliniowy skrypt.
+        # Tylko polecenia jednowierszowe mogą być bezpiecznie poprzedzone operatorem '&'.
+        if "\n" not in command_with_full_path:
+            # Dla poleceń jednowierszowych (np. winget), operator '&' jest wymagany do uruchomienia polecenia ze ścieżki w cudzysłowie.
             full_command = f"$ProgressPreference = 'SilentlyContinue'; [System.Threading.Thread]::CurrentThread.CurrentUICulture = 'en-US'; & {command_with_full_path}"
         else:
-            # Dla skryptów wieloliniowych (np. aktualizacja OS), operator '&' powoduje błąd.
+            # Dla skryptów wieloliniowych (np. aktualizacja OS), operator '&' powoduje błąd składni.
             full_command = f"$ProgressPreference = 'SilentlyContinue'; [System.Threading.Thread]::CurrentThread.CurrentUICulture = 'en-US'; {command_with_full_path}"
 
         result = subprocess.run(

@@ -22,12 +22,15 @@
                             <span>{{ computer.agent_version or 'Brak danych' }}</span>
                         </div>
                         <div class="tile-info">
-                            <strong>Wersja Winget:</strong>
+                            <strong>Tryb Winget:</strong>
                             <span>
-                                {% if computer.agent_mode == 'text' %}
-                                    <span class="status-pending" title="Agent pracuje w trybie rezerwowym">{{ computer.winget_version or 'Zbyt stara' }}</span>
+                                {% if computer.agent_mode == 'json' %}
+                                    <span class="status-ok" title="Winget w wersji {{ computer.winget_version or 'b/d' }} pracuje w nowoczesnym trybie JSON.">JSON</span>
+                                {% elif computer.agent_mode == 'text' %}
+                                    <span class="status-pending" title="Winget w wersji {{ computer.winget_version or 'b/d' }} pracuje w trybie rezerwowym (analiza tekstu).">TEXT</span>
                                 {% else %}
-                                    <span>{{ computer.winget_version or 'Brak danych' }}</span>
+                                    <span class="status-offline">{{ computer.agent_mode or 'Brak danych' }}</span>
+
                                 {% endif %}
                             </span>
                         </div>
