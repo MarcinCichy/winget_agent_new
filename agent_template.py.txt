@@ -237,11 +237,9 @@ class Agent:
         self.last_light_report_time = 0
         self.winget_version, self.agent_mode = self._determine_winget_mode()
         self.winget_manager = WingetManager(self.agent_mode)
-        # Wstrzyknięta wartość to obiekt Pythona, nie trzeba go parsować
         self.error_definitions = ERROR_DEFINITIONS_JSON
 
     def _run_command_as_user(self, command):
-        """Pomocnicza metoda do uruchamiania poleceń przez UiClient i parsowania wyniku."""
         response_str = UiClient.send_request({"type": "execute_command", "command": command})
         if response_str in ["no_response", "no_helper", "error"]:
             return None
@@ -254,16 +252,13 @@ class Agent:
         return None
 
     def _determine_winget_mode(self):
-        """Sprawdza wersję winget i decyduje o trybie pracy agenta, działając w kontekście użytkownika."""
         logging.info("Sprawdzanie wersji i możliwości winget w kontekście użytkownika...")
-
         version_output = self._run_command_as_user("winget --version")
         version = "N/A"
         if version_output:
             match = re.search(r'v(\d+\.\d+\..*?\d+)', version_output)
             if match:
                 version = match.group(1).strip()
-
         help_output = self._run_command_as_user("winget list --help")
         if help_output and "--json" in help_output:
             logging.info(f"Wykryto winget w wersji {version}. Agent będzie pracował w trybie JSON.")
@@ -273,40 +268,30 @@ class Agent:
             return version, "text"
 
     def _ensure_ui_helper_autostart(self):
-        """Upewnia się, że zadanie autostartu dla ui_helper.exe istnieje w Harmonogramie Zadań."""
         try:
             logging.info("Weryfikacja zadania autostartu dla Pomocnika UI...")
             agent_dir = os.path.dirname(sys.executable)
             ui_helper_path = os.path.join(agent_dir, "ui_helper.exe")
-
             if not os.path.exists(ui_helper_path):
                 logging.error(f"Nie znaleziono pliku ui_helper.exe w oczekiwanej lokalizacji: {ui_helper_path}")
                 return
-
             task_name = "Winget Dashboard UI Helper"
-
             check_command = f'schtasks /query /TN "{task_name}"'
             result = CommandRunner.run(check_command)
-
             if result and result.returncode == 0:
                 logging.info("Zadanie autostartu dla Pomocnika UI już istnieje.")
                 return
-
             logging.info("Brak zadania autostartu dla Pomocnika UI. Tworzenie nowego...")
-
             create_command = f"schtasks /create /TN \"{task_name}\" /TR '\"{ui_helper_path}\"' /SC ONLOGON /RL HIGHEST /F"
             create_result = CommandRunner.run(create_command)
-
             if create_result and create_result.returncode == 0:
                 logging.info("Pomyślnie utworzono zadanie autostartu w Harmonogramie Zadań.")
             else:
                 logging.error(f"Nie udało się utworzyć zadania autostartu. Wynik: {create_result.stdout}\n{create_result.stderr}")
-
         except Exception as e:
             logging.error(f"Nie udało się skonfigurować autostartu dla Pomocnika UI: {e}", exc_info=True)
 
     def send_heartbeat(self):
-        """Wysyła szybki sygnał 'heartbeat' w celu odświeżenia statusu online."""
         try:
             logging.info("Wysyłanie sygnału heartbeat (status online)...")
             heartbeat_data = {
@@ -323,13 +308,11 @@ class Agent:
             logging.error(f"Błąd podczas wysyłania sygnału heartbeat: {e}")
 
     def run_full_report(self):
-        """Wysyła pełny, czasochłonny raport ze wszystkimi danymi."""
         try:
             logging.info("Rozpoczynanie pełnego raportu...")
             logging.info("Aktualizowanie źródeł winget...")
             self._run_command_as_user("winget source update")
             logging.info("Zakończono aktualizację źródeł winget.")
-
             self.blacklist = self.api_client.get_blacklist(self.hostname)
             report_data = {
                 "hostname": self.hostname,
@@ -383,7 +366,6 @@ class Agent:
     def _schedule_task_on_logon(self, task_id, base_command, payload):
         task_name = f"WingetAgentTask_{task_id}"
         command_to_run = ""
-
         if base_command in ['request_update', 'force_update']:
             command_to_run = f"winget update --id '{payload}' --silent --accept-package-agreements; schtasks /Delete /TN '{task_name}' /F"
         elif base_command in ['request_uninstall', 'force_uninstall']:
@@ -393,10 +375,8 @@ class Agent:
         else:
             logging.error(f"Nieznana komenda do zaplanowania: {base_command}")
             return
-
         request_data = {"type": "schedule_task", "task_name": task_name, "command": command_to_run, "trigger_type": "onlogon"}
         response_json = UiClient.send_request(request_data)
-
         try:
             response = json.loads(response_json)
             if response.get('status') == 'success':
@@ -410,7 +390,6 @@ class Agent:
         self.api_client.send_task_result(task_id, 'w_trakcie_wykonywania')
         final_command = ""
         action_type_for_msg = "operacja"
-
         if payload == 'os_update' or base_command == 'os_update':
             action_type_for_msg = "aktualizacja systemu"
             final_command = self._get_os_update_script()
@@ -427,9 +406,10 @@ class Agent:
         response_json = UiClient.send_request({"type": "execute_command", "command": final_command})
 
         if response_json in ["no_response", "no_helper", "error"]:
-            details = "Nie można wykonać zadania, ponieważ pomocnik UI nie jest dostępny (prawdopodobnie nikt nie jest zalogowany)."
+            details = "Pomocnik UI nie jest dostępny. Zadanie zostało automatycznie zaplanowane na następne logowanie użytkownika."
             logging.warning(details)
-            self.api_client.send_task_result(task_id, 'niepowodzenie_brak_uzytkownika', details)
+            action_command = base_command.replace('force_', 'request_')
+            self._schedule_task_on_logon(task_id, action_command, payload)
             return
 
         try:
@@ -443,25 +423,20 @@ class Agent:
             else:
                 error_handled = False
                 details_lower = (details or "").lower()
-
                 for error_def in self.error_definitions:
                     if error_def.get("check_type") == "details_contains" and error_def.get("check_value") in details_lower:
                         logging.warning(f"Zadanie {task_id} dla '{payload}' obsłużone przez regułę '{error_def['report_status']}'")
                         self.api_client.send_task_result(task_id, error_def['report_status'], error_def['report_details'])
-
                         if error_def.get('notify_user'):
                             UiClient.send_request({
                                 "type": "info",
                                 "title": error_def.get('user_title', 'Informacja'),
                                 "message": error_def.get('user_message', '').format(payload=payload)
                             })
-
                         if error_def['report_status'] == 'zakończone':
                              task_was_successful = True
-
                         error_handled = True
                         break
-
                 if not error_handled:
                     if "application is currently running" in details_lower:
                         logging.info(f"Wykryto, że aplikacja '{payload}' jest uruchomiona. Automatycznie planuję zadanie na następne logowanie.")
@@ -471,17 +446,14 @@ class Agent:
                     else:
                         self.api_client.send_task_result(task_id, 'niepowodzenie_interwencja_uzytkownika', details)
                         UiClient.send_request({"type": "info", "title": "Automatyzacja nie powiodła się", "message": f"Automatyczna {action_type_for_msg} '{payload if payload != 'os_update' else ''}' nie powiodła się. Prosimy o ręczne wykonanie tej operacji."})
-
             if task_was_successful and base_command in ['update', 'uninstall']:
                 logging.info(f"Zadanie {task_id} zakończone sukcesem. Uruchamiam pełny raport w tle w celu odświeżenia stanu.")
                 threading.Thread(target=self.run_full_report, daemon=True).start()
-
         except (json.JSONDecodeError, TypeError, AttributeError) as e:
             self.api_client.send_task_result(task_id, 'błąd', f"Błąd wewnętrzny agenta: {e}")
 
     def _handle_interactive_task(self, task):
         task_id, command, payload = task['id'], task['command'], task['payload']
-
         request_data = {"type": "ping"}
         ping_response = UiClient.send_request(request_data)
         if ping_response in ["no_response", "no_helper", "error"]:
@@ -489,7 +461,6 @@ class Agent:
             logging.warning(details)
             self.api_client.send_task_result(task_id, 'niepowodzenie_brak_uzytkownika', details)
             return
-
         try:
             self.api_client.send_task_result(task_id, 'oczekuje_na_uzytkownika')
             if command == 'request_os_update':
@@ -497,12 +468,10 @@ class Agent:
             else:
                 action_type = "deinstalacji" if "uninstall" in command else "aktualizacji"
                 app_name = f"aplikacji '{payload}'"
-
             request_data = {"type": "request", "title": f"Prośba o {action_type}", "message": f"Dział IT prosi o {action_type} {app_name}.", "detail": "Wybierz 'Tak', aby uruchomić teraz, lub 'Nie', aby zaplanować na następne logowanie."}
             response_json = UiClient.send_request(request_data)
             response_data = json.loads(response_json)
             user_choice = response_data.get('response')
-
             if user_choice == "now":
                 action_command = command.replace('request_', '')
                 self._perform_action_now(task_id, action_command, payload)
@@ -514,38 +483,30 @@ class Agent:
             self.api_client.send_task_result(task_id, 'błąd', f"Błąd wewnętrzny agenta: {e}")
 
     def _perform_self_update(self, download_url, service_framework):
-        """Wykonuje logikę pobrania i uruchomienia aktualizacji agenta."""
         try:
             current_agent_path, agent_dir = sys.executable, os.path.dirname(sys.executable)
             new_agent_path, updater_path = os.path.join(agent_dir, "agent_new.exe"), os.path.join(agent_dir, "updater.exe")
-
             if not os.path.exists(updater_path):
                 logging.error("Krytyczny błąd: Nie znaleziono pliku updater.exe!")
                 if hasattr(self, 'api_client') and 'task' in locals() and task: self.api_client.send_task_result(task['id'], 'błąd', 'Nie znaleziono updater.exe')
                 return
-
             logging.info(f"Pobieranie nowej wersji agenta z: {download_url}")
             response = requests.get(download_url, stream=True)
             response.raise_for_status()
-
             with open(new_agent_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
-
             logging.info("Pobieranie zakończone. Uruchamianie aktualizatora...")
             api_endpoint = self.api_client.endpoints[0]
             command = [updater_path, str(os.getpid()), new_agent_path, current_agent_path, service_framework._svc_name_, self.hostname, api_endpoint]
             subprocess.Popen(command, creationflags=subprocess.DETACHED_PROCESS)
-
             service_framework.SvcStop()
-
         except Exception as e:
             logging.error(f"Krytyczny błąd podczas procesu aktualizacji: {e}", exc_info=True)
             if hasattr(self, 'api_client') and 'task' in locals() and task:
                  self.api_client.send_task_result(task['id'], 'błąd', f"Błąd aktualizacji: {e}")
 
     def _handle_self_update(self, task, service_framework):
-        """Obsługuje zadanie samoaktualizacji otrzymane z serwera."""
         try:
             self.api_client.send_task_result(task['id'], 'w_trakcie_aktualizacji')
             download_url = json.loads(task['payload'])['download_url']
@@ -557,22 +518,29 @@ class Agent:
     def check_for_self_update_on_startup(self, service_framework):
         """Sprawdza, czy na serwerze jest nowsza wersja agenta i uruchamia aktualizację."""
         try:
+            agent_dir = os.path.dirname(sys.executable)
+            flag_path = os.path.join(agent_dir, "skip_update_check.flag")
+            if os.path.exists(flag_path):
+                logging.info("Wykryto flagę po aktualizacji, pomijam sprawdzanie wersji przy tym starcie.")
+                try:
+                    os.remove(flag_path)
+                except Exception as e:
+                    logging.error(f"Nie udało się usunąć pliku flagi: {e}")
+                return
+
             logging.info("Sprawdzanie dostępności aktualizacji agenta przy starcie...")
             response = self.api_client._request('get', '/api/agent/latest_info')
             info = response.json()
             latest_version = info.get("latest_version")
             download_url = info.get("download_url")
-
             if not latest_version or not download_url:
                 logging.error("Nie udało się pobrać informacji o najnowszej wersji agenta.")
                 return
-
             if latest_version > self.version:
                 logging.info(f"Znaleziono nowszą wersję agenta: {latest_version} (obecna: {self.version}). Uruchamianie samoaktualizacji...")
                 self._perform_self_update(download_url, service_framework)
             else:
                 logging.info(f"Agent jest w aktualnej wersji ({self.version}).")
-
         except ConnectionError as e:
             logging.warning(f"Nie można sprawdzić wersji agenta, serwer niedostępny: {e}")
         except Exception as e:
@@ -585,7 +553,6 @@ class Agent:
             for task in tasks:
                 command, task_id, payload = task['command'], task['id'], task['payload']
                 logging.info(f"Otrzymano zadanie ID {task_id}: {command}")
-
                 if command.startswith('request_'):
                     threading.Thread(target=self._handle_interactive_task, args=(task,), daemon=True).start()
                 elif command == 'force_report':
@@ -637,14 +604,12 @@ class AgentService(win32serviceutil.ServiceFramework):
             initial_full_report_thread.start()
         except Exception as e:
             logging.error(f"Błąd podczas raportów startowych: {e}")
-
         while self.is_running:
             if win32event.WaitForSingleObject(self.hWaitStop, LOOP_INTERVAL * 1000) == win32event.WAIT_OBJECT_0:
                 break
             try:
                 now = time.time()
                 self.agent.check_and_execute_tasks(service_framework)
-
                 if (now - self.agent.last_full_report_time) >= REPORT_INTERVAL:
                     self.agent.run_full_report()
                 elif (now - self.agent.last_light_report_time) >= LIGHT_REPORT_INTERVAL:
@@ -672,7 +637,6 @@ if __name__ == '__main__':
                 print(f"Błąd: Usługa '{AgentService._svc_display_name_}' nie jest zainstalowana.")
             else:
                 print(f"Wystąpił nieoczekiwany błąd: {e}")
-
     elif len(sys.argv) == 1:
         try:
             servicemanager.Initialize()

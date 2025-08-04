@@ -1,4 +1,4 @@
-# Plik: updater.py (wersja z raportowaniem)
+# Plik: updater.py (wersja z raportowaniem i flagą)
 import sys
 import os
 import shutil
@@ -72,11 +72,16 @@ if __name__ == "__main__":
                 time.sleep(5)
         else:
             log("KRYTYCZNY BŁĄD: Nie udało się podmienić pliku agenta po wielu próbach.")
-            # Nie wychodzimy z programu, aby zaraportować błąd
             update_successful = False
 
         # Uruchom usługę tylko jeśli podmiana się powiodła
         if update_successful:
+            # Tworzymy plik flagi przed uruchomieniem usługi
+            log("Tworzenie flagi 'skip_update_check.flag' dla nowego agenta...")
+            flag_path = os.path.join(os.path.dirname(current_agent_path), "skip_update_check.flag")
+            with open(flag_path, "w") as f:
+                f.write("1")
+
             log("Próba uruchomienia nowej wersji usługi...")
             subprocess.run(["sc", "start", service_name], check=True, capture_output=True)
             log("Polecenie uruchomienia usługi wysłane pomyślnie.")
