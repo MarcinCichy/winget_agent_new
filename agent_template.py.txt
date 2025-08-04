@@ -633,7 +633,10 @@ class AgentService(win32serviceutil.ServiceFramework):
                 time.sleep(60)
 
 if __name__ == '__main__':
-    if len(sys.argv) > 1 and sys.argv[1].lower() == 'status':
+    # ZMODYFIKOWANY BLOK - DODANO OBSŁUGĘ 'version'
+    if len(sys.argv) > 1 and sys.argv[1].lower() == 'version':
+        print(f"Wersja agenta Winget Dashboard: {AGENT_VERSION}")
+    elif len(sys.argv) > 1 and sys.argv[1].lower() == 'status':
         status_dict = {
             win32service.SERVICE_STOPPED: "Zatrzymana",
             win32service.SERVICE_START_PENDING: "Uruchamianie...",
