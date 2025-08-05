@@ -395,23 +395,26 @@ class Agent:
     def _schedule_task_on_logon(self, task_id, base_command, payload):
         command_to_run = ""
         task_name = ""
+        agent_path = sys.executable
 
         sanitized_app_name = ""
         if payload != 'os_update':
             app_name_guess = payload.split('.')[-1]
             sanitized_app_name = re.sub(r'[\\/:*?"<>|]', '', app_name_guess)
 
+        final_command = f"; & '{agent_path}' trigger_report"
+
         if base_command in ['request_update', 'force_update']:
             task_name = f"WD Agent - Aktualizacja {sanitized_app_name} (ID {task_id})"
             message = f"Rozpoczynanie automatycznej aktualizacji aplikacji: {sanitized_app_name}..."
-            command_to_run = f"msg * '{message}'; winget update --id '{payload}' --silent --accept-package-agreements; schtasks /Delete /TN \"{task_name}\" /F"
+            command_to_run = f"msg * '{message}'; winget update --id '{payload}' --silent --accept-package-agreements; schtasks /Delete /TN \"{task_name}\" /F" + final_command
         elif base_command in ['request_uninstall', 'force_uninstall']:
             task_name = f"WD Agent - Deinstalacja {sanitized_app_name} (ID {task_id})"
             message = f"Rozpoczynanie automatycznej deinstalacji aplikacji: {sanitized_app_name}..."
-            command_to_run = f"msg * '{message}'; winget uninstall --id '{payload}' --silent --force; schtasks /Delete /TN \"{task_name}\" /F"
+            command_to_run = f"msg * '{message}'; winget uninstall --id '{payload}' --silent --force; schtasks /Delete /TN \"{task_name}\" /F" + final_command
         elif base_command in ['request_os_update', 'force_os_update']:
             task_name = f"WD Agent - Aktualizacja Systemu (ID {task_id})"
-            command_to_run = f"{self._get_os_update_script()}; schtasks /Delete /TN \"{task_name}\" /F"
+            command_to_run = f"{self._get_os_update_script()}; schtasks /Delete /TN \"{task_name}\" /F" + final_command
         else:
             logging.error(f"Nieznana komenda do zaplanowania: {base_command}")
             return
@@ -624,8 +627,6 @@ class Agent:
                 logging.error(f"Nie udało się usunąć flagi health_check: {e}")
         else:
             logging.critical("Health Check ZAKOŃCZONY NIEPOWODZENIEM po wielu próbach!")
-            # Tutaj nie używamy task_id, bo go nie mamy w tym kontekście.
-            # Wysyłamy ogólny status błędu dla hosta.
             try:
                 self.api_client._request('post', '/api/agent/update_status',
                     data=json.dumps({'hostname': self.hostname, 'status': 'błąd_po_aktualizacji', 'details': 'Health check failed, rolling back'}))
@@ -709,6 +710,22 @@ class AgentService(win32serviceutil.ServiceFramework):
 if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1].lower() == 'version':
         print(f"Wersja agenta Winget Dashboard: {AGENT_VERSION}")
+    elif len(sys.argv) > 1 and sys.argv[1].lower() == 'trigger_report':
+        try:
+            # Ta część kodu jest wykonywana w osobnym, krótkotrwałym procesie
+            # i nie ma dostępu do loggera usługi, więc używamy print
+            print("Otrzymano polecenie trigger_report. Inicjowanie klienta API...")
+            client = ApiClient(API_ENDPOINTS, API_KEY)
+            hostname = SystemInfo.get_hostname()
+            print(f"Wysyłanie prośby o raport dla hosta: {hostname}")
+            client._request('post', f'/api/computer/{hostname}/trigger_report')
+            print("Prośba o raport została wysłana pomyślnie.")
+        except Exception as e:
+            # Błędy logujemy do dedykowanego pliku, aby nie "zaśmiecać" głównego logu agenta
+            log_dir = os.path.join(os.environ.get('PROGRAMDATA', 'C:\\ProgramData'), "WingetAgent")
+            os.makedirs(log_dir, exist_ok=True)
+            logging.basicConfig(filename=os.path.join(log_dir, 'agent_cli.log'), level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+            logging.error(f"Błąd podczas trigger_report: {e}", exc_info=True)
     elif len(sys.argv) > 1 and sys.argv[1].lower() == 'status':
         status_dict = {
             win32service.SERVICE_STOPPED: "Zatrzymana",

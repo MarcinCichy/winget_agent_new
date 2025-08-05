@@ -236,27 +236,63 @@ class DatabaseManager:
         return cursor.lastrowid
 
     def get_pending_tasks(self, hostname):
-        computer = self._execute("SELECT id FROM computers WHERE hostname = ? COLLATE NOCASE", (hostname,)).fetchone()
+        computer = self._execute("SELECT id, agent_version FROM computers WHERE hostname = ? COLLATE NOCASE",
+                                 (hostname,)).fetchone()
         if not computer: return []
         computer_id = computer['id']
 
         query = """
-        SELECT id, command, payload, status FROM tasks 
+        SELECT id, computer_id, command, payload, status FROM tasks 
         WHERE computer_id = ? 
         AND (
             status = 'oczekuje' 
             OR 
-            (status IN ('w toku', 'w_trakcie_wykonywania', 'w_trakcie_aktualizacji', 'oczekuje_na_uzytkownika') AND updated_at < datetime('now', '-15 minutes'))
+            (status IN ('w toku', 'w_trakcie_wykonywania', 'w_trakcie_aktualizacji', 'oczekuje_na_uzytkownika', 'sukces_oczekuje_na_potwierdzenie') 
+             AND updated_at < datetime('now', '-15 minutes'))
         )
         """
         tasks = self._execute(query, (computer_id,)).fetchall()
 
-        if tasks:
-            task_ids_to_update = []
-            for t in tasks:
-                if t['command'] != 'self_update':
-                    task_ids_to_update.append(t['id'])
+        tasks_to_return = []
+        tasks_to_complete = []
 
+        for task in tasks:
+            is_stuck = task['status'] != 'oczekuje'
+            is_self_update = task['command'] == 'self_update'
+
+            if is_stuck and is_self_update:
+                try:
+                    payload = json.loads(task['payload'])
+                    target_version = payload.get('target_version')
+
+                    if target_version and computer['agent_version']:
+                        if computer['agent_version'] >= target_version:
+                            tasks_to_complete.append(task['id'])
+                            logging.info(
+                                f"Wykryto zawieszone zadanie self_update (ID: {task['id']}), ale agent ma już aktualną wersję ({computer['agent_version']}). Zadanie zostanie zamknięte.")
+                            continue
+                    else:
+                        tasks_to_complete.append(task['id'])
+                        logging.warning(
+                            f"Wykryto i zamknięto zawieszone zadanie self_update bez numeru wersji (ID: {task['id']}), aby zapobiec niechcianym aktualizacjom.")
+                        continue
+                except (json.JSONDecodeError, TypeError, KeyError):
+                    tasks_to_complete.append(task['id'])
+                    logging.error(
+                        f"Wykryto i zamknięto zawieszone zadanie self_update z uszkodzonym payloadem (ID: {task['id']}).")
+                    continue
+
+            tasks_to_return.append(dict(task))
+
+        if tasks_to_complete:
+            placeholders = ','.join('?' for _ in tasks_to_complete)
+            self._execute(
+                f"UPDATE tasks SET status = 'zakończone', result_details = 'Zadanie zamknięte automatycznie przez serwer (agent już zaktualizowany lub zadanie przestarzałe).' WHERE id IN ({placeholders})",
+                tuple(tasks_to_complete), commit=True
+            )
+
+        if tasks_to_return:
+            task_ids_to_update = [t['id'] for t in tasks_to_return if t['command'] != 'self_update']
             if task_ids_to_update:
                 current_app.logger.info(
                     f"Pobrano zadania {task_ids_to_update} dla {hostname}. Zmieniam status na 'w toku'.")
@@ -265,7 +301,7 @@ class DatabaseManager:
                     f"UPDATE tasks SET status = 'w toku', updated_at = CURRENT_TIMESTAMP WHERE id IN ({placeholders})",
                     tuple(task_ids_to_update), commit=True)
 
-        return [dict(row) for row in tasks]
+        return tasks_to_return
 
     def update_task_status(self, task_id, status, details=None):
         self._execute("UPDATE tasks SET status = ?, result_details = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -305,7 +341,6 @@ class DatabaseManager:
         logging.info(f"Usunięto zadania o ID: {task_ids}")
 
     def get_computer_tasks(self, computer_id):
-        """Pobiera najnowsze zadanie dla każdego payloadu danego komputera."""
         query = """
         SELECT id, payload, status, command, updated_at
         FROM (
@@ -333,7 +368,6 @@ class DatabaseManager:
         logging.info(f"Usunięto komputer o ID: {computer_id}")
 
     def cleanup_scheduled_tasks(self, computer_id):
-        """Zmienia status 'zaplanowane_na_logowanie' na 'zakończone_po_restarcie' dla danego komputera."""
         details_text = "Zadanie zakończone automatycznie po otrzymaniu nowego raportu (wynik na kliencie nieznany)."
         self._execute(
             "UPDATE tasks SET status = 'zakończone_po_restarcie', result_details = ? WHERE computer_id = ? AND status = 'zaplanowane_na_logowanie'",
@@ -343,7 +377,6 @@ class DatabaseManager:
         logging.info(f"Wyczyszczono przestarzałe 'zaplanowane' zadania dla komputera ID: {computer_id}")
 
     def get_pending_updates_for_computer(self, computer_id):
-        """Pobiera listę wszystkich oczekujących aktualizacji (aplikacji i OS) dla danego komputera z ostatniego raportu."""
         query = """
         SELECT update_type, app_id
         FROM updates

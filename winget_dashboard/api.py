@@ -104,6 +104,20 @@ def request_refresh(computer_id):
     return jsonify({"status": "success", "message": "Zadanie odświeżenia zlecone", "task_id": task_id})
 
 
+# NOWY ENDPOINT
+@bp.route('/computer/<hostname>/trigger_report', methods=['POST'])
+@require_api_key
+def trigger_report(hostname):
+    db_manager = DatabaseManager()
+    details = db_manager.get_computer_details(hostname)
+    if not details:
+        return "Computer not found", 404
+    computer_id = details['computer']['id']
+    task_id = db_manager.create_task(computer_id, 'force_report', '{}')
+    return jsonify({"status": "success", "message": f"Zadanie odświeżenia (force_report) zlecone dla {hostname}",
+                    "task_id": task_id})
+
+
 @bp.route('/computer/<int:computer_id>/tasks', methods=['GET'])
 def get_computer_tasks(computer_id):
     db_manager = DatabaseManager()
@@ -241,8 +255,10 @@ def get_latest_agent_info():
 
 @bp.route('/computer/<int:computer_id>/agent_update', methods=['POST'])
 def request_agent_update(computer_id):
+    version_service = AgentVersionService()
+    target_version = version_service.get_server_agent_version()
     download_path = url_for('api.download_latest_agent')
-    payload = {'download_path': download_path}
+    payload = {'download_path': download_path, 'target_version': target_version}
 
     db_manager = DatabaseManager()
     task_id = db_manager.create_task(
@@ -250,7 +266,7 @@ def request_agent_update(computer_id):
         command='self_update',
         payload=payload
     )
-    current_app.logger.info(f"Zlecono zadanie aktualizacji dla komputera ID {computer_id} ze ścieżką: {download_path}")
+    current_app.logger.info(f"Zlecono zadanie aktualizacji dla komputera ID {computer_id} do wersji {target_version}")
     return jsonify({"status": "success", "message": "Zlecono zadanie aktualizacji agenta", "task_id": task_id})
 
 
@@ -258,7 +274,7 @@ def request_agent_update(computer_id):
 def agent_update_status():
     data = request.get_json()
     hostname, status = data.get('hostname'), data.get('status')
-    details = data.get('details', "")  # Dodano details
+    details = data.get('details', "")
     if not hostname or not status:
         return "Bad Request", 400
 
@@ -289,8 +305,10 @@ def deploy_update_to_all():
     if not computers:
         return jsonify({"status": "warning", "message": "Brak komputerów w bazie danych do aktualizacji."}), 200
 
+    version_service = AgentVersionService()
+    target_version = version_service.get_server_agent_version()
     download_path = url_for('api.download_latest_agent')
-    payload = {'download_path': download_path}
+    payload = {'download_path': download_path, 'target_version': target_version}
 
     tasks_created_count = 0
     for computer in computers:
@@ -301,7 +319,7 @@ def deploy_update_to_all():
         )
         tasks_created_count += 1
 
-    message = f"Pomyślnie zlecono zadanie aktualizacji dla {tasks_created_count} komputerów."
+    message = f"Pomyślnie zlecono zadanie aktualizacji do wersji {target_version} dla {tasks_created_count} komputerów."
     current_app.logger.info(message)
     return jsonify({"status": "success", "message": message, "count": tasks_created_count})
 

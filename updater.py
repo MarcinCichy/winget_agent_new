@@ -1,4 +1,4 @@
-# Plik: updater.py (wersja z obsługą backupu i rollbacku)
+# Plik: updater.py (wersja z obsługą backupu, rollbacku i ujednoliconym logowaniem)
 import sys
 import os
 import shutil
@@ -7,7 +7,7 @@ import subprocess
 import json
 import logging
 
-# Konfiguracja logowania, aby było spójne z resztą systemu
+# Konfiguracja logowania - ZAPIS DO C:\ProgramData\WingetAgent\updater.log
 LOG_DIR = os.path.join(os.environ.get('PROGRAMDATA', 'C:\\ProgramData'), "WingetAgent")
 os.makedirs(LOG_DIR, exist_ok=True)
 logging.basicConfig(

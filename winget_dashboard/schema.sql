@@ -16,7 +16,7 @@ CREATE TABLE computers (
     blacklist_keywords TEXT,
     last_agent_update_status TEXT,
     last_agent_update_ts TIMESTAMP,
-    last_agent_update_confirmed_at TIMESTAMP, -- DODANA KOLUMNA
+    last_agent_update_confirmed_at TIMESTAMP,
     winget_version TEXT,
     agent_mode TEXT
 );

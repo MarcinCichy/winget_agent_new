@@ -98,7 +98,6 @@ def run_command_as_user(command_str):
         return json.dumps({"status": "failure", "details": str(e)})
 
 
-# ZMODYFIKOWANA FUNKCJA
 def schedule_task_as_user(task_name, command_to_run, trigger_type='onlogon'):
     logging.info(f"Otrzymano prośbę o zaplanowanie zadania '{task_name}' z wyzwalaczem '{trigger_type}'")
     temp_dir = tempfile.gettempdir()
@@ -118,7 +117,6 @@ Remove-Item -Path "{starter_script_path}" -Force -ErrorAction SilentlyContinue
         with open(starter_script_path, "w", encoding="utf-8") as f:
             f.write(starter_script_content)
 
-        # ZMIANA: Dodano -WindowStyle Hidden, aby ukryć okno konsoli PowerShell
         task_command = f'powershell.exe -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File "{starter_script_path}"'
 
         base_schtasks_command = ['schtasks', '/Create', '/TN', task_name, '/TR', task_command, '/F']
