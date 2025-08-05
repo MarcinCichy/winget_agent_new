@@ -1,4 +1,4 @@
-# Plik: ui_helper.py (OSTATECZNA POPRAWKA)
+# Plik: ui_helper.py
 
 import socket
 import json
@@ -11,12 +11,8 @@ import tempfile
 import ctypes
 import base64
 
-# ===============================================================
-# Lokalizacja logów w folderze systemowym (%PROGRAMDATA%)
-# ===============================================================
 LOG_DIR = os.path.join(os.environ.get('PROGRAMDATA', 'C:\\ProgramData'), "WingetAgent")
 LOG_FILE = os.path.join(LOG_DIR, "ui_helper.log")
-# ===============================================================
 
 os.makedirs(LOG_DIR, exist_ok=True)
 logging.basicConfig(filename=LOG_FILE, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -26,7 +22,6 @@ PORT = 61900
 
 
 def show_dialog_native(data):
-    """Wyświetla natywne okno dialogowe Windows, które jest bezpieczne wątkowo."""
     try:
         dialog_type = data.get('type', 'info')
         title = data.get('title', 'Winget Dashboard')
@@ -44,7 +39,7 @@ def show_dialog_native(data):
             full_message = f"{message}\n\n{data.get('detail', '')}"
             result = ctypes.windll.user32.MessageBoxW(0, full_message, title, style)
             response_str = "now" if result == IDYES else "shutdown"
-        else:  # Obejmuje 'info' i każdy inny typ
+        else:
             style = MB_OK | MB_ICONINFORMATION
             ctypes.windll.user32.MessageBoxW(0, message, title, style)
             response_str = "ok"
@@ -56,7 +51,6 @@ def show_dialog_native(data):
 
 
 def get_winget_path() -> str:
-    """Zwraca absolutną ścieżkę do winget.exe lub 'winget', jeśli nie zostanie znaleziona."""
     try:
         local_app_data = os.environ.get('LOCALAPPDATA')
         if local_app_data:
@@ -72,7 +66,6 @@ def get_winget_path() -> str:
 
 
 def run_command_as_user(command_str):
-    """Wykonuje polecenie w PowerShell z poprawną obsługą ścieżek."""
     winget_executable = get_winget_path()
     command_with_full_path = command_str.replace('winget', winget_executable, 1)
 
@@ -80,14 +73,9 @@ def run_command_as_user(command_str):
     logging.info(f"Polecenie po przetworzeniu ścieżki: {command_with_full_path}")
 
     try:
-        # --- OSTATECZNA POPRAWKA: Rozróżnianie poleceń jedno- i wieloliniowych ---
-        # Sprawdzamy, czy wykonujemy polecenie jednowierszowe, czy wieloliniowy skrypt.
-        # Tylko polecenia jednowierszowe mogą być bezpiecznie poprzedzone operatorem '&'.
         if "\n" not in command_with_full_path:
-            # Dla poleceń jednowierszowych (np. winget), operator '&' jest wymagany do uruchomienia polecenia ze ścieżki w cudzysłowie.
             full_command = f"$ProgressPreference = 'SilentlyContinue'; [System.Threading.Thread]::CurrentThread.CurrentUICulture = 'en-US'; & {command_with_full_path}"
         else:
-            # Dla skryptów wieloliniowych (np. aktualizacja OS), operator '&' powoduje błąd składni.
             full_command = f"$ProgressPreference = 'SilentlyContinue'; [System.Threading.Thread]::CurrentThread.CurrentUICulture = 'en-US'; {command_with_full_path}"
 
         result = subprocess.run(
@@ -110,6 +98,7 @@ def run_command_as_user(command_str):
         return json.dumps({"status": "failure", "details": str(e)})
 
 
+# ZMODYFIKOWANA FUNKCJA
 def schedule_task_as_user(task_name, command_to_run, trigger_type='onlogon'):
     logging.info(f"Otrzymano prośbę o zaplanowanie zadania '{task_name}' z wyzwalaczem '{trigger_type}'")
     temp_dir = tempfile.gettempdir()
@@ -129,7 +118,8 @@ Remove-Item -Path "{starter_script_path}" -Force -ErrorAction SilentlyContinue
         with open(starter_script_path, "w", encoding="utf-8") as f:
             f.write(starter_script_content)
 
-        task_command = f'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{starter_script_path}"'
+        # ZMIANA: Dodano -WindowStyle Hidden, aby ukryć okno konsoli PowerShell
+        task_command = f'powershell.exe -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File "{starter_script_path}"'
 
         base_schtasks_command = ['schtasks', '/Create', '/TN', task_name, '/TR', task_command, '/F']
 

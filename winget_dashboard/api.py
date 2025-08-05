@@ -1,3 +1,5 @@
+# winget-dashboard_new/winget_dashboard/api.py
+
 from flask import Blueprint, request, jsonify, abort, current_app, url_for, send_from_directory, flash
 from functools import wraps
 from .db import DatabaseManager
@@ -227,12 +229,12 @@ def get_latest_agent_info():
         if not server_info.get('file_exists'):
             return jsonify({"error": "Agent file not found on server"}), 404
 
-        base_url = request.host_url.strip('/')
-        download_url = f"{base_url}{url_for('api.download_latest_agent')}"
+        # Zmieniono logikę - teraz wysyłamy tylko ścieżkę względną
+        download_path = url_for('api.download_latest_agent')
 
         return jsonify({
             "latest_version": server_info.get('version'),
-            "download_url": download_url
+            "download_path": download_path
         })
     except Exception as e:
         current_app.logger.error(f"Błąd podczas pobierania info o agencie: {e}")
@@ -241,9 +243,9 @@ def get_latest_agent_info():
 
 @bp.route('/computer/<int:computer_id>/agent_update', methods=['POST'])
 def request_agent_update(computer_id):
-    base_url = request.host_url.strip('/')
-    download_url = f"{base_url}{url_for('api.download_latest_agent')}"
-    payload = {'download_url': download_url}
+    # ZMIENIONA LOGIKA: Wysyłamy tylko ścieżkę, nie cały URL
+    download_path = url_for('api.download_latest_agent')
+    payload = {'download_path': download_path}
 
     db_manager = DatabaseManager()
     task_id = db_manager.create_task(
@@ -251,7 +253,7 @@ def request_agent_update(computer_id):
         command='self_update',
         payload=payload
     )
-    current_app.logger.info(f"Zlecono zadanie aktualizacji dla komputera ID {computer_id} z URL: {download_url}")
+    current_app.logger.info(f"Zlecono zadanie aktualizacji dla komputera ID {computer_id} ze ścieżką: {download_path}")
     return jsonify({"status": "success", "message": "Zlecono zadanie aktualizacji agenta", "task_id": task_id})
 
 
@@ -285,9 +287,9 @@ def deploy_update_to_all():
     if not computers:
         return jsonify({"status": "warning", "message": "Brak komputerów w bazie danych do aktualizacji."}), 200
 
-    base_url = request.host_url.strip('/')
-    download_url = f"{base_url}{url_for('api.download_latest_agent')}"
-    payload = {'download_url': download_url}
+    # ZMIENIONA LOGIKA: Wysyłamy tylko ścieżkę, nie cały URL
+    download_path = url_for('api.download_latest_agent')
+    payload = {'download_path': download_path}
 
     tasks_created_count = 0
     for computer in computers:

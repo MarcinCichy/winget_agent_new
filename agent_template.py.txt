@@ -1,3 +1,5 @@
+# winget-dashboard_new/agent_template.py.txt
+
 import sys
 import os
 import time
@@ -316,17 +318,13 @@ class Agent:
 
             self.blacklist = self.api_client.get_blacklist(self.hostname)
 
-            # Pobieramy dane z winget
             installed_apps = self.winget_manager.get_installed_apps(self.blacklist)
             available_app_updates = self.winget_manager.get_available_updates()
 
-            # Sprawdzamy, czy pobieranie danych z winget się powiodło.
-            # Jeśli nie mamy listy zainstalowanych aplikacji, to jest to oznaka błędu winget.
             if not installed_apps:
                 logging.error("Nie udało się pobrać listy zainstalowanych aplikacji z Winget. Przerywam wysyłanie pełnego raportu, aby nie nadpisać stanu.")
-                # W takiej sytuacji wysyłamy tylko heartbeat, żeby utrzymać status online
                 self.send_heartbeat()
-                return # Zakończ funkcję bez wysyłania raportu
+                return
 
             report_data = {
                 "hostname": self.hostname,
@@ -347,48 +345,74 @@ class Agent:
 
     def _get_os_update_script(self):
         return """
-        Write-Host "Rozpoczynanie sesji Windows Update..."
         $updateSession = New-Object -ComObject Microsoft.Update.Session
         $updateSearcher = $updateSession.CreateUpdateSearcher()
-        Write-Host "Wyszukiwanie dostępnych aktualizacji..."
         $searchResult = $updateSearcher.Search("IsInstalled=0 and Type='Software'").Updates
+
         if ($searchResult.Count -eq 0) {
-            Write-Host "Brak dostępnych aktualizacji."
+            msg * "Brak nowych aktualizacji systemu Windows do zainstalowania."
             exit 0
         }
-        Write-Host "Znaleziono $($searchResult.Count) aktualizacji. Pobieranie..."
+
+        $updateTitles = ($searchResult | ForEach-Object { "- $($_.Title)" }) -join [System.Environment]::NewLine
+        $message = "Rozpoczynam automatyczną instalację $($searchResult.Count) aktualizacji systemu Windows:" + [System.Environment]::NewLine + $updateTitles
+        msg * $message
+
+        Write-Host "Pobieranie..."
         $downloader = $updateSession.CreateUpdateDownloader()
         $downloader.Updates = $searchResult
         $downloader.Download()
+
         $updatesToInstall = New-Object -ComObject Microsoft.Update.UpdateColl
         foreach ($update in $searchResult) {
             if ($update.IsDownloaded) { $updatesToInstall.Add($update) | Out-Null }
         }
+
         if ($updatesToInstall.Count -eq 0) {
-            Write-Host "Aktualizacje zostały znalezione, ale nie udało się ich pobrać."
+            msg * "Błąd: Aktualizacje systemu Windows zostały znalezione, ale nie udało się ich pobrać."
             exit 1
         }
+
         Write-Host "Instalowanie $($updatesToInstall.Count) aktualizacji..."
         $installer = $updateSession.CreateUpdateInstaller()
         $installer.Updates = $updatesToInstall
         $result = $installer.Install()
+
         Write-Host "Instalacja zakończona. Kod wyniku: $($result.ResultCode). Wymagany restart: $($result.RebootRequired)"
+        if ($result.RebootRequired) {
+            msg * "Instalacja aktualizacji systemu Windows została zakończona. Komputer wymaga ponownego uruchomienia."
+        } else {
+            msg * "Instalacja aktualizacji systemu Windows została zakończona."
+        }
+
         if ($result.ResultCode -ne 2) { exit 1 }
         exit 0
         """
 
     def _schedule_task_on_logon(self, task_id, base_command, payload):
-        task_name = f"WingetAgentTask_{task_id}"
         command_to_run = ""
+        task_name = ""
+
+        sanitized_app_name = ""
+        if payload != 'os_update':
+            app_name_guess = payload.split('.')[-1]
+            sanitized_app_name = re.sub(r'[\\/:*?"<>|]', '', app_name_guess)
+
         if base_command in ['request_update', 'force_update']:
-            command_to_run = f"winget update --id '{payload}' --silent --accept-package-agreements; schtasks /Delete /TN '{task_name}' /F"
+            task_name = f"WD Agent - Aktualizacja {sanitized_app_name} (ID {task_id})"
+            message = f"Rozpoczynanie automatycznej aktualizacji aplikacji: {sanitized_app_name}..."
+            command_to_run = f"msg * '{message}'; winget update --id '{payload}' --silent --accept-package-agreements; schtasks /Delete /TN \"{task_name}\" /F"
         elif base_command in ['request_uninstall', 'force_uninstall']:
-            command_to_run = f"winget uninstall --id '{payload}' --silent --force; schtasks /Delete /TN '{task_name}' /F"
+            task_name = f"WD Agent - Deinstalacja {sanitized_app_name} (ID {task_id})"
+            message = f"Rozpoczynanie automatycznej deinstalacji aplikacji: {sanitized_app_name}..."
+            command_to_run = f"msg * '{message}'; winget uninstall --id '{payload}' --silent --force; schtasks /Delete /TN \"{task_name}\" /F"
         elif base_command in ['request_os_update', 'force_os_update']:
-            command_to_run = f"{self._get_os_update_script()}; schtasks /Delete /TN '{task_name}' /F"
+            task_name = f"WD Agent - Aktualizacja Systemu (ID {task_id})"
+            command_to_run = f"{self._get_os_update_script()}; schtasks /Delete /TN \"{task_name}\" /F"
         else:
             logging.error(f"Nieznana komenda do zaplanowania: {base_command}")
             return
+
         request_data = {"type": "schedule_task", "task_name": task_name, "command": command_to_run, "trigger_type": "onlogon"}
         response_json = UiClient.send_request(request_data)
         try:
@@ -496,41 +520,50 @@ class Agent:
         except Exception as e:
             self.api_client.send_task_result(task_id, 'błąd', f"Błąd wewnętrzny agenta: {e}")
 
-    def _perform_self_update(self, download_url, service_framework):
+    def _perform_self_update(self, download_url, service_framework, task=None):
         try:
             current_agent_path, agent_dir = sys.executable, os.path.dirname(sys.executable)
             new_agent_path, updater_path = os.path.join(agent_dir, "agent_new.exe"), os.path.join(agent_dir, "updater.exe")
             if not os.path.exists(updater_path):
-                logging.error("Krytyczny błąd: Nie znaleziono pliku updater.exe!")
-                if hasattr(self, 'api_client') and 'task' in locals() and task: self.api_client.send_task_result(task['id'], 'błąd', 'Nie znaleziono updater.exe')
+                error_msg = "Krytyczny błąd: Nie znaleziono pliku updater.exe!"
+                logging.error(error_msg)
+                if task and hasattr(self, 'api_client'):
+                    self.api_client.send_task_result(task['id'], 'błąd', error_msg)
                 return
+
             logging.info(f"Pobieranie nowej wersji agenta z: {download_url}")
-            response = requests.get(download_url, stream=True)
+            response = requests.get(download_url, stream=True, timeout=60)
             response.raise_for_status()
             with open(new_agent_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
+
             logging.info("Pobieranie zakończone. Uruchamianie aktualizatora...")
             api_endpoint = self.api_client.endpoints[0]
             command = [updater_path, str(os.getpid()), new_agent_path, current_agent_path, service_framework._svc_name_, self.hostname, api_endpoint]
             subprocess.Popen(command, creationflags=subprocess.DETACHED_PROCESS)
             service_framework.SvcStop()
         except Exception as e:
-            logging.error(f"Krytyczny błąd podczas procesu aktualizacji: {e}", exc_info=True)
-            if hasattr(self, 'api_client') and 'task' in locals() and task:
-                 self.api_client.send_task_result(task['id'], 'błąd', f"Błąd aktualizacji: {e}")
+            error_msg = f"Krytyczny błąd podczas procesu aktualizacji: {e}"
+            logging.error(error_msg, exc_info=True)
+            if task and hasattr(self, 'api_client'):
+                 self.api_client.send_task_result(task['id'], 'błąd', error_msg)
 
     def _handle_self_update(self, task, service_framework):
         try:
             self.api_client.send_task_result(task['id'], 'w_trakcie_aktualizacji')
-            download_url = json.loads(task['payload'])['download_url']
-            self._perform_self_update(download_url, service_framework)
+
+            task_payload = json.loads(task['payload'])
+            download_path = task_payload['download_path']
+            base_url = self.api_client.endpoints[0].strip('/')
+            full_download_url = f"{base_url}{download_path}"
+
+            self._perform_self_update(full_download_url, service_framework, task)
         except Exception as e:
             logging.error(f"Błąd przetwarzania zadania self_update: {e}", exc_info=True)
             self.api_client.send_task_result(task['id'], 'błąd', f"Błąd agenta: {e}")
 
     def check_for_self_update_on_startup(self, service_framework):
-        """Sprawdza, czy na serwerze jest nowsza wersja agenta i uruchamia aktualizację."""
         try:
             agent_dir = os.path.dirname(sys.executable)
             flag_path = os.path.join(agent_dir, "skip_update_check.flag")
@@ -546,13 +579,17 @@ class Agent:
             response = self.api_client._request('get', '/api/agent/latest_info')
             info = response.json()
             latest_version = info.get("latest_version")
-            download_url = info.get("download_url")
-            if not latest_version or not download_url:
+            download_path = info.get("download_path")
+
+            if not latest_version or not download_path:
                 logging.error("Nie udało się pobrać informacji o najnowszej wersji agenta.")
                 return
+
             if latest_version > self.version:
                 logging.info(f"Znaleziono nowszą wersję agenta: {latest_version} (obecna: {self.version}). Uruchamianie samoaktualizacji...")
-                self._perform_self_update(download_url, service_framework)
+                base_url = self.api_client.endpoints[0].strip('/')
+                full_download_url = f"{base_url}{download_path}"
+                self._perform_self_update(full_download_url, service_framework)
             else:
                 logging.info(f"Agent jest w aktualnej wersji ({self.version}).")
         except ConnectionError as e:
@@ -633,7 +670,6 @@ class AgentService(win32serviceutil.ServiceFramework):
                 time.sleep(60)
 
 if __name__ == '__main__':
-    # ZMODYFIKOWANY BLOK - DODANO OBSŁUGĘ 'version'
     if len(sys.argv) > 1 and sys.argv[1].lower() == 'version':
         print(f"Wersja agenta Winget Dashboard: {AGENT_VERSION}")
     elif len(sys.argv) > 1 and sys.argv[1].lower() == 'status':
