@@ -102,6 +102,9 @@ class ApiClient:
         payload = {'task_id': task_id, 'status': status, 'details': details}
         self._request('post', '/api/tasks/result', data=json.dumps(payload))
     def send_heartbeat(self, data): self._request('post', '/api/agent/heartbeat', data=json.dumps(data))
+    def confirm_update_health(self, hostname):
+        self._request('post', '/api/agent/update_confirm', data=json.dumps({'hostname': hostname}))
+
 
 class WingetManager:
     def __init__(self, agent_mode):
@@ -522,13 +525,15 @@ class Agent:
 
     def _perform_self_update(self, download_url, service_framework, task=None):
         try:
-            current_agent_path, agent_dir = sys.executable, os.path.dirname(sys.executable)
-            new_agent_path, updater_path = os.path.join(agent_dir, "agent_new.exe"), os.path.join(agent_dir, "updater.exe")
+            current_agent_path = sys.executable
+            agent_dir = os.path.dirname(current_agent_path)
+            new_agent_path = os.path.join(agent_dir, "agent_new.exe")
+            updater_path = os.path.join(agent_dir, "updater.exe")
+
             if not os.path.exists(updater_path):
                 error_msg = "Krytyczny błąd: Nie znaleziono pliku updater.exe!"
                 logging.error(error_msg)
-                if task and hasattr(self, 'api_client'):
-                    self.api_client.send_task_result(task['id'], 'błąd', error_msg)
+                if task: self.api_client.send_task_result(task['id'], 'błąd', error_msg)
                 return
 
             logging.info(f"Pobieranie nowej wersji agenta z: {download_url}")
@@ -546,56 +551,87 @@ class Agent:
         except Exception as e:
             error_msg = f"Krytyczny błąd podczas procesu aktualizacji: {e}"
             logging.error(error_msg, exc_info=True)
-            if task and hasattr(self, 'api_client'):
-                 self.api_client.send_task_result(task['id'], 'błąd', error_msg)
+            if task: self.api_client.send_task_result(task['id'], 'błąd', error_msg)
 
     def _handle_self_update(self, task, service_framework):
         try:
             self.api_client.send_task_result(task['id'], 'w_trakcie_aktualizacji')
-
             task_payload = json.loads(task['payload'])
             download_path = task_payload['download_path']
             base_url = self.api_client.endpoints[0].strip('/')
             full_download_url = f"{base_url}{download_path}"
-
             self._perform_self_update(full_download_url, service_framework, task)
         except Exception as e:
             logging.error(f"Błąd przetwarzania zadania self_update: {e}", exc_info=True)
             self.api_client.send_task_result(task['id'], 'błąd', f"Błąd agenta: {e}")
 
     def check_for_self_update_on_startup(self, service_framework):
+        pass
+
+    def _trigger_updater_rollback(self, service_framework):
+        logging.warning("Health check nie powiódł się. Inicjowanie rollbacku...")
         try:
             agent_dir = os.path.dirname(sys.executable)
-            flag_path = os.path.join(agent_dir, "skip_update_check.flag")
-            if os.path.exists(flag_path):
-                logging.info("Wykryto flagę po aktualizacji, pomijam sprawdzanie wersji przy tym starcie.")
-                try:
-                    os.remove(flag_path)
-                except Exception as e:
-                    logging.error(f"Nie udało się usunąć pliku flagi: {e}")
+            updater_path = os.path.join(agent_dir, "updater.exe")
+            if not os.path.exists(updater_path):
+                logging.error("Nie można wykonać rollbacku - brak updater.exe!")
                 return
 
-            logging.info("Sprawdzanie dostępności aktualizacji agenta przy starcie...")
-            response = self.api_client._request('get', '/api/agent/latest_info')
-            info = response.json()
-            latest_version = info.get("latest_version")
-            download_path = info.get("download_path")
-
-            if not latest_version or not download_path:
-                logging.error("Nie udało się pobrać informacji o najnowszej wersji agenta.")
-                return
-
-            if latest_version > self.version:
-                logging.info(f"Znaleziono nowszą wersję agenta: {latest_version} (obecna: {self.version}). Uruchamianie samoaktualizacji...")
-                base_url = self.api_client.endpoints[0].strip('/')
-                full_download_url = f"{base_url}{download_path}"
-                self._perform_self_update(full_download_url, service_framework)
-            else:
-                logging.info(f"Agent jest w aktualnej wersji ({self.version}).")
-        except ConnectionError as e:
-            logging.warning(f"Nie można sprawdzić wersji agenta, serwer niedostępny: {e}")
+            command = [updater_path, '--rollback', sys.executable, service_framework._svc_name_]
+            subprocess.Popen(command, creationflags=subprocess.DETACHED_PROCESS)
+            service_framework.SvcStop()
         except Exception as e:
-            logging.error(f"Wystąpił nieoczekiwany błąd podczas sprawdzania aktualizacji agenta: {e}", exc_info=True)
+            logging.error(f"Krytyczny błąd podczas inicjowania rollbacku: {e}")
+
+    def _trigger_updater_cleanup(self):
+        logging.info("Health check pomyślny. Inicjowanie czyszczenia...")
+        try:
+            agent_dir = os.path.dirname(sys.executable)
+            updater_path = os.path.join(agent_dir, "updater.exe")
+            if not os.path.exists(updater_path): return
+
+            command = [updater_path, '--cleanup', sys.executable]
+            subprocess.Popen(command, creationflags=subprocess.DETACHED_PROCESS)
+        except Exception as e:
+            logging.error(f"Błąd podczas inicjowania czyszczenia: {e}")
+
+    def run_post_update_health_check(self, service_framework):
+        agent_dir = os.path.dirname(sys.executable)
+        flag_path = os.path.join(agent_dir, "health_check.flag")
+
+        if not os.path.exists(flag_path):
+            return
+
+        logging.warning("Wykryto flagę po aktualizacji. Rozpoczynanie procedury Health Check...")
+
+        health_check_passed = False
+        for i in range(12):
+            try:
+                logging.info(f"Próba Health Check ({i+1}/12)...")
+                self.api_client.confirm_update_health(self.hostname)
+                logging.info("Health Check ZAKOŃCZONY SUKCESEM. Agent jest sprawny.")
+                health_check_passed = True
+                break
+            except Exception as e:
+                logging.warning(f"Health Check nie powiódł się: {e}. Ponawiam za 10 sekund.")
+                time.sleep(10)
+
+        if health_check_passed:
+            try:
+                os.remove(flag_path)
+                self._trigger_updater_cleanup()
+            except OSError as e:
+                logging.error(f"Nie udało się usunąć flagi health_check: {e}")
+        else:
+            logging.critical("Health Check ZAKOŃCZONY NIEPOWODZENIEM po wielu próbach!")
+            # Tutaj nie używamy task_id, bo go nie mamy w tym kontekście.
+            # Wysyłamy ogólny status błędu dla hosta.
+            try:
+                self.api_client._request('post', '/api/agent/update_status',
+                    data=json.dumps({'hostname': self.hostname, 'status': 'błąd_po_aktualizacji', 'details': 'Health check failed, rolling back'}))
+            except Exception as e:
+                logging.error(f"Nie udało się wysłać finalnego statusu błędu przed rollbackiem: {e}")
+            self._trigger_updater_rollback(service_framework)
 
     def check_and_execute_tasks(self, service_framework):
         try:
@@ -640,8 +676,9 @@ class AgentService(win32serviceutil.ServiceFramework):
         servicemanager.LogMsg(servicemanager.EVENTLOG_INFORMATION_TYPE, servicemanager.PYS_SERVICE_STARTED, (self._svc_name_, ''))
         try:
             self.agent = Agent()
+            self.agent.run_post_update_health_check(self)
+
             self.agent._ensure_ui_helper_autostart()
-            self.agent.check_for_self_update_on_startup(self)
             self.main_loop(self)
         except Exception as e:
             logging.critical(f"Krytyczny błąd uniemożliwiający uruchomienie: {e}", exc_info=True)

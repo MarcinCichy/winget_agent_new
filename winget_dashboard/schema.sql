@@ -1,4 +1,4 @@
--- Plik: winget_dashboard/schema.sql
+-- winget-dashboard_new/winget_dashboard/schema.sql
 
 DROP TABLE IF EXISTS computers;
 DROP TABLE IF EXISTS reports;
@@ -10,15 +10,15 @@ CREATE TABLE computers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     hostname TEXT UNIQUE NOT NULL,
     ip_address TEXT,
-    last_report TIMESTAMP,
-    reboot_required BOOLEAN DEFAULT 0,
+    last_report TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    reboot_required BOOLEAN DEFAULT FALSE,
     agent_version TEXT,
     blacklist_keywords TEXT,
     last_agent_update_status TEXT,
     last_agent_update_ts TIMESTAMP,
-    -- NOWE POLA --
+    last_agent_update_confirmed_at TIMESTAMP, -- DODANA KOLUMNA
     winget_version TEXT,
-    agent_mode TEXT -- 'json' lub 'text'
+    agent_mode TEXT
 );
 
 CREATE TABLE reports (
@@ -44,7 +44,7 @@ CREATE TABLE updates (
     app_id TEXT,
     current_version TEXT,
     available_version TEXT,
-    update_type TEXT, -- 'APP' lub 'OS'
+    update_type TEXT NOT NULL, -- 'APP' or 'OS'
     FOREIGN KEY (report_id) REFERENCES reports (id) ON DELETE CASCADE
 );
 
@@ -53,7 +53,7 @@ CREATE TABLE tasks (
     computer_id INTEGER NOT NULL,
     command TEXT NOT NULL,
     payload TEXT,
-    status TEXT DEFAULT 'oczekuje', -- np. oczekuje, w toku, zakończone, błąd
+    status TEXT DEFAULT 'oczekuje',
     result_details TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

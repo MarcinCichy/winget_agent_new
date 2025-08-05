@@ -1,3 +1,5 @@
+# winget-dashboard_new/winget_dashboard/db.py
+
 import sqlite3
 import logging
 import click
@@ -111,11 +113,17 @@ class DatabaseManager:
             logging.error(f"Błąd transakcji podczas zapisu raportu od {hostname}: {e}", exc_info=True)
             return None
 
-    def update_agent_update_status(self, hostname, status):
+    def update_agent_update_status(self, hostname, status, details=""):
         self._execute(
-            "UPDATE computers SET last_agent_update_status = ?, last_agent_update_ts = CURRENT_TIMESTAMP WHERE hostname = ? COLLATE NOCASE",
+            "UPDATE computers SET last_agent_update_status = ?, last_agent_update_ts = CURRENT_TIMESTAMP, last_agent_update_confirmed_at = NULL WHERE hostname = ? COLLATE NOCASE",
             (status, hostname), commit=True)
         logging.info(f"Zaktualizowano status self-update dla {hostname} na: {status}")
+
+    def confirm_agent_update(self, hostname):
+        self._execute(
+            "UPDATE computers SET last_agent_update_confirmed_at = CURRENT_TIMESTAMP WHERE hostname = ? COLLATE NOCASE",
+            (hostname,), commit=True)
+        logging.info(f"Potwierdzono poprawność działania nowego agenta na komputerze: {hostname}")
 
     def update_computer_status_from_heartbeat(self, data):
         hostname = data.get('hostname')
@@ -144,7 +152,8 @@ class DatabaseManager:
         query = """
         SELECT
             c.id, c.hostname, c.ip_address, c.last_report, c.reboot_required, c.agent_version,
-            c.last_agent_update_status, c.last_agent_update_ts, c.winget_version, c.agent_mode,
+            c.last_agent_update_status, c.last_agent_update_ts, c.last_agent_update_confirmed_at,
+            c.winget_version, c.agent_mode,
             IFNULL(upd_counts.app_updates, 0) as app_update_count,
             IFNULL(upd_counts.os_updates, 0) as os_update_count
         FROM

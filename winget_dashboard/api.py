@@ -221,7 +221,6 @@ def download_latest_agent():
 @bp.route('/agent/latest_info', methods=['GET'])
 @require_api_key
 def get_latest_agent_info():
-    """Zwraca informacje o najnowszej wersji agenta dostępnej na serwerze."""
     try:
         version_service = AgentVersionService()
         server_info = version_service.get_server_agent_info()
@@ -229,7 +228,6 @@ def get_latest_agent_info():
         if not server_info.get('file_exists'):
             return jsonify({"error": "Agent file not found on server"}), 404
 
-        # Zmieniono logikę - teraz wysyłamy tylko ścieżkę względną
         download_path = url_for('api.download_latest_agent')
 
         return jsonify({
@@ -243,7 +241,6 @@ def get_latest_agent_info():
 
 @bp.route('/computer/<int:computer_id>/agent_update', methods=['POST'])
 def request_agent_update(computer_id):
-    # ZMIENIONA LOGIKA: Wysyłamy tylko ścieżkę, nie cały URL
     download_path = url_for('api.download_latest_agent')
     payload = {'download_path': download_path}
 
@@ -261,22 +258,27 @@ def request_agent_update(computer_id):
 def agent_update_status():
     data = request.get_json()
     hostname, status = data.get('hostname'), data.get('status')
+    details = data.get('details', "")  # Dodano details
     if not hostname or not status:
         return "Bad Request", 400
 
     db_manager = DatabaseManager()
-    db_manager.update_agent_update_status(hostname, status)
-
-    computer_details = db_manager.get_computer_details(hostname)
-    if computer_details:
-        active_tasks = db_manager.get_active_tasks_for_computer(computer_details['computer']['id'],
-                                                                command_filter='self_update')
-        if active_tasks:
-            task_ids_to_remove = [task['id'] for task in active_tasks]
-            db_manager.delete_tasks(task_ids_to_remove)
-            current_app.logger.info(f"Wyczyszczono {len(task_ids_to_remove)} zadań self-update dla {hostname}.")
+    db_manager.update_agent_update_status(hostname, status, details)
 
     return "Status received", 200
+
+
+@bp.route('/agent/update_confirm', methods=['POST'])
+@require_api_key
+def agent_update_confirm():
+    data = request.get_json()
+    hostname = data.get('hostname')
+    if not hostname:
+        return "Bad Request", 400
+
+    db_manager = DatabaseManager()
+    db_manager.confirm_agent_update(hostname)
+    return jsonify({"status": "success", "message": "Health check confirmed"})
 
 
 @bp.route('/agent/deploy_update', methods=['POST'])
@@ -287,7 +289,6 @@ def deploy_update_to_all():
     if not computers:
         return jsonify({"status": "warning", "message": "Brak komputerów w bazie danych do aktualizacji."}), 200
 
-    # ZMIENIONA LOGIKA: Wysyłamy tylko ścieżkę, nie cały URL
     download_path = url_for('api.download_latest_agent')
     payload = {'download_path': download_path}
 
