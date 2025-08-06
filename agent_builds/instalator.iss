@@ -19,9 +19,9 @@ PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
 
 [Files]
-Source: "C:\Users\Administrator\PycharmProjects\winget-dashboard_new\agent_builds\agent.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\Users\Administrator\PycharmProjects\winget-dashboard_new\agent_builds\ui_helper.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\Users\Administrator\PycharmProjects\winget-dashboard_new\agent_builds\updater.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "E:\Programowanie\Project\winget_agent_new\agent_builds\agent.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "E:\Programowanie\Project\winget_agent_new\agent_builds\ui_helper.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "E:\Programowanie\Project\winget_agent_new\agent_builds\updater.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Code]
 // Uruchamia się na początku, czyści środowisko przed instalacją

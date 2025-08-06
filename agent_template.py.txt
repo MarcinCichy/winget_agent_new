@@ -17,6 +17,8 @@ import win32serviceutil
 import win32service
 import win32event
 import pywintypes
+import winreg
+import ctypes
 
 # --- Konfiguracja wstrzykiwana ---
 API_ENDPOINTS = [ep.strip() for ep in ["__API_ENDPOINT_1__", "__API_ENDPOINT_2__"] if ep and ep.strip()]
@@ -712,8 +714,6 @@ if __name__ == '__main__':
         print(f"Wersja agenta Winget Dashboard: {AGENT_VERSION}")
     elif len(sys.argv) > 1 and sys.argv[1].lower() == 'trigger_report':
         try:
-            # Ta część kodu jest wykonywana w osobnym, krótkotrwałym procesie
-            # i nie ma dostępu do loggera usługi, więc używamy print
             print("Otrzymano polecenie trigger_report. Inicjowanie klienta API...")
             client = ApiClient(API_ENDPOINTS, API_KEY)
             hostname = SystemInfo.get_hostname()
@@ -721,7 +721,6 @@ if __name__ == '__main__':
             client._request('post', f'/api/computer/{hostname}/trigger_report')
             print("Prośba o raport została wysłana pomyślnie.")
         except Exception as e:
-            # Błędy logujemy do dedykowanego pliku, aby nie "zaśmiecać" głównego logu agenta
             log_dir = os.path.join(os.environ.get('PROGRAMDATA', 'C:\\ProgramData'), "WingetAgent")
             os.makedirs(log_dir, exist_ok=True)
             logging.basicConfig(filename=os.path.join(log_dir, 'agent_cli.log'), level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
