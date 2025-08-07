@@ -17,6 +17,8 @@ import win32serviceutil
 import win32service
 import win32event
 import pywintypes
+import winreg
+import ctypes
 
 # --- Konfiguracja wstrzykiwana ---
 API_ENDPOINTS = [ep.strip() for ep in ["__API_ENDPOINT_1__", "__API_ENDPOINT_2__"] if ep and ep.strip()]
@@ -664,7 +666,7 @@ class AgentService(win32serviceutil.ServiceFramework):
     def __init__(self, args):
         win32serviceutil.ServiceFramework.__init__(self, args)
         self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)
-        self.is_running = True; self.agent = None
+        self.is_running = True; self.agent = None; self.last_work_time = 0
     def _setup_logging(self):
         log_dir = os.path.join(os.environ.get('PROGRAMDATA', 'C:\\ProgramData'), "WingetAgent")
         os.makedirs(log_dir, exist_ok=True)
@@ -680,40 +682,48 @@ class AgentService(win32serviceutil.ServiceFramework):
             self.agent.run_post_update_health_check(self)
 
             self.agent._ensure_ui_helper_autostart()
-            self.main_loop(self)
+
+            try:
+                self.agent.send_heartbeat()
+                initial_full_report_thread = threading.Thread(target=self.agent.run_full_report, daemon=True)
+                initial_full_report_thread.start()
+                self.last_work_time = time.time()
+            except Exception as e:
+                logging.error(f"Błąd podczas raportów startowych: {e}")
+
+            self.main_loop()
         except Exception as e:
             logging.critical(f"Krytyczny błąd uniemożliwiający uruchomienie: {e}", exc_info=True)
             self.SvcStop()
 
-    def main_loop(self, service_framework):
-        if not self.is_running: return
-        try:
-            self.agent.send_heartbeat()
-            initial_full_report_thread = threading.Thread(target=self.agent.run_full_report, daemon=True)
-            initial_full_report_thread.start()
-        except Exception as e:
-            logging.error(f"Błąd podczas raportów startowych: {e}")
+    def main_loop(self):
         while self.is_running:
-            if win32event.WaitForSingleObject(self.hWaitStop, LOOP_INTERVAL * 1000) == win32event.WAIT_OBJECT_0:
+            result = win32event.WaitForSingleObject(self.hWaitStop, 1000)
+            if result == win32event.WAIT_OBJECT_0:
                 break
-            try:
-                now = time.time()
-                self.agent.check_and_execute_tasks(service_framework)
-                if (now - self.agent.last_full_report_time) >= REPORT_INTERVAL:
-                    self.agent.run_full_report()
-                elif (now - self.agent.last_light_report_time) >= LIGHT_REPORT_INTERVAL:
-                    self.agent.send_heartbeat()
-            except Exception as e:
-                logging.error(f"Nieoczekiwany błąd w pętli: {e}", exc_info=True)
-                time.sleep(60)
+
+            now = time.time()
+
+            if (now - self.last_work_time) >= LOOP_INTERVAL:
+                try:
+                    self.agent.check_and_execute_tasks(self)
+
+                    if (now - self.agent.last_full_report_time) >= REPORT_INTERVAL:
+                        self.agent.run_full_report()
+                    elif (now - self.agent.last_light_report_time) >= LIGHT_REPORT_INTERVAL:
+                        self.agent.send_heartbeat()
+
+                    self.last_work_time = now
+                except Exception as e:
+                    logging.error(f"Nieoczekiwany błąd w pętli roboczej: {e}", exc_info=True)
+                    self.last_work_time = now
+                    time.sleep(60)
 
 if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1].lower() == 'version':
         print(f"Wersja agenta Winget Dashboard: {AGENT_VERSION}")
     elif len(sys.argv) > 1 and sys.argv[1].lower() == 'trigger_report':
         try:
-            # Ta część kodu jest wykonywana w osobnym, krótkotrwałym procesie
-            # i nie ma dostępu do loggera usługi, więc używamy print
             print("Otrzymano polecenie trigger_report. Inicjowanie klienta API...")
             client = ApiClient(API_ENDPOINTS, API_KEY)
             hostname = SystemInfo.get_hostname()
@@ -721,7 +731,6 @@ if __name__ == '__main__':
             client._request('post', f'/api/computer/{hostname}/trigger_report')
             print("Prośba o raport została wysłana pomyślnie.")
         except Exception as e:
-            # Błędy logujemy do dedykowanego pliku, aby nie "zaśmiecać" głównego logu agenta
             log_dir = os.path.join(os.environ.get('PROGRAMDATA', 'C:\\ProgramData'), "WingetAgent")
             os.makedirs(log_dir, exist_ok=True)
             logging.basicConfig(filename=os.path.join(log_dir, 'agent_cli.log'), level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
