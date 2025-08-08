@@ -720,49 +720,102 @@ class AgentService(win32serviceutil.ServiceFramework):
                     time.sleep(60)
 
 if __name__ == '__main__':
-    if len(sys.argv) > 1 and sys.argv[1].lower() == 'version':
-        print(f"Wersja agenta Winget Dashboard: {AGENT_VERSION}")
-    elif len(sys.argv) > 1 and sys.argv[1].lower() == 'trigger_report':
-        try:
-            print("Otrzymano polecenie trigger_report. Inicjowanie klienta API...")
-            client = ApiClient(API_ENDPOINTS, API_KEY)
-            hostname = SystemInfo.get_hostname()
-            print(f"Wysyłanie prośby o raport dla hosta: {hostname}")
-            client._request('post', f'/api/computer/{hostname}/trigger_report')
-            print("Prośba o raport została wysłana pomyślnie.")
-        except Exception as e:
-            log_dir = os.path.join(os.environ.get('PROGRAMDATA', 'C:\\ProgramData'), "WingetAgent")
-            os.makedirs(log_dir, exist_ok=True)
-            logging.basicConfig(filename=os.path.join(log_dir, 'agent_cli.log'), level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-            logging.error(f"Błąd podczas trigger_report: {e}", exc_info=True)
-    elif len(sys.argv) > 1 and sys.argv[1].lower() == 'status':
-        status_dict = {
-            win32service.SERVICE_STOPPED: "Zatrzymana",
-            win32service.SERVICE_START_PENDING: "Uruchamianie...",
-            win32service.SERVICE_STOP_PENDING: "Zatrzymywanie...",
-            win32service.SERVICE_RUNNING: "Uruchomiona",
-            win32service.SERVICE_CONTINUE_PENDING: "Wznawianie...",
-            win32service.SERVICE_PAUSE_PENDING: "Pauzowanie...",
-            win32service.SERVICE_PAUSED: "Spauzowana",
-        }
-        try:
-            status_info = win32serviceutil.QueryServiceStatus(AgentService._svc_name_)
-            print(f"Status usługi '{AgentService._svc_display_name_}': {status_dict.get(status_info[1], 'Nieznany')}")
-        except pywintypes.error as e:
-            if e.winerror == 1060:
-                print(f"Błąd: Usługa '{AgentService._svc_display_name_}' nie jest zainstalowana.")
-            else:
-                print(f"Wystąpił nieoczekiwany błąd: {e}")
-    elif len(sys.argv) == 1:
-        try:
-            servicemanager.Initialize()
-            servicemanager.PrepareToHostSingle(AgentService)
-            servicemanager.StartServiceCtrlDispatcher()
-        except pywintypes.error as e:
-            if e.winerror == 1063:
-                print("Błąd: Nie można uruchomić agenta ręcznie, gdy usługa jest już aktywna.")
-                print("Użyj 'agent.exe start|stop|restart|debug|status' do zarządzania usługą.")
-            else:
-                raise
+    if len(sys.argv) > 1 and sys.argv[1].lower() in ['install', 'uninstall', 'remove', 'start', 'stop', 'restart', 'status', 'version', 'trigger_report']:
+        cmd = sys.argv[1].lower()
+        agent_dir = os.path.dirname(os.path.abspath(sys.executable))
+
+        def get_system_path_from_registry():
+            try:
+                result = subprocess.run(
+                    ["reg", "query", r"HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment", "/v", "Path"],
+                    capture_output=True, text=True, check=True, encoding='oem', errors='ignore'
+                )
+                for line in result.stdout.splitlines():
+                    if line.strip().startswith("Path"):
+                        return line.split(maxsplit=2)[-1]
+                return ""
+            except Exception:
+                return os.environ.get('PATH', '')
+
+        if cmd == 'install':
+            try:
+                win32serviceutil.InstallService(
+                    AgentService._svc_name_,
+                    AgentService._svc_display_name_,
+                    AgentService._svc_description_,
+                    startType=win32service.SERVICE_AUTO_START
+                )
+                print(f"Usługa '{AgentService._svc_display_name_}' zainstalowana pomyślnie.")
+
+                current_path = get_system_path_from_registry()
+                paths = [p.strip() for p in current_path.split(';') if p.strip()]
+                if agent_dir not in paths:
+                    print(f"Dodawanie '{agent_dir}' do systemowej zmiennej PATH...")
+                    new_path = f"{current_path};{agent_dir}"
+                    subprocess.run(["setx", "PATH", new_path, "/M"], check=True, capture_output=True)
+                    print("Ścieżka została pomyślnie dodana. Otwórz nowe okno konsoli, aby zmiany weszły w życie.")
+            except Exception as e:
+                print(f"Wystąpił błąd podczas instalacji: {e}")
+
+        elif cmd in ['uninstall', 'remove']:
+            try:
+                current_path = get_system_path_from_registry()
+                paths = [p.strip() for p in current_path.split(';') if p.strip()]
+
+                if agent_dir in paths:
+                    print(f"Usuwanie '{agent_dir}' ze zmiennej PATH...")
+                    paths.remove(agent_dir)
+                    new_path = ';'.join(paths)
+                    subprocess.run(["setx", "PATH", new_path, "/M"], check=True, capture_output=True)
+                    print("Ścieżka została pomyślnie usunięta.")
+
+                win32serviceutil.RemoveService(AgentService._svc_name_)
+                print(f"Usługa '{AgentService._svc_display_name_}' odinstalowana pomyślnie.")
+            except Exception as e:
+                print(f"Wystąpił błąd podczas deinstalacji: {e}")
+
+        elif cmd == 'start':
+            win32serviceutil.HandleCommandLine(AgentService)
+
+        elif cmd == 'stop':
+            win32serviceutil.HandleCommandLine(AgentService)
+
+        elif cmd == 'restart':
+            win32serviceutil.HandleCommandLine(AgentService)
+
+        elif cmd == 'status':
+            status_dict = {
+                win32service.SERVICE_STOPPED: "Zatrzymana",
+                win32service.SERVICE_START_PENDING: "Uruchamianie...",
+                win32service.SERVICE_STOP_PENDING: "Zatrzymywanie...",
+                win32service.SERVICE_RUNNING: "Uruchomiona",
+            }
+            try:
+                status_info = win32serviceutil.QueryServiceStatus(AgentService._svc_name_)
+                print(f"Status usługi '{AgentService._svc_display_name_}': {status_dict.get(status_info[1], 'Nieznany')}")
+            except pywintypes.error as e:
+                if e.winerror == 1060:
+                    print(f"Błąd: Usługa '{AgentService._svc_display_name_}' nie jest zainstalowana.")
+                else:
+                    print(f"Wystąpił nieoczekiwany błąd: {e}")
+
+        elif cmd == 'version':
+            print(f"Wersja agenta Winget Dashboard: {AGENT_VERSION}")
+
+        elif cmd == 'trigger_report':
+            try:
+                client = ApiClient(API_ENDPOINTS, API_KEY)
+                hostname = SystemInfo.get_hostname()
+                client._request('post', f'/api/computer/{hostname}/trigger_report')
+            except Exception as e:
+                log_dir = os.path.join(os.environ.get('PROGRAMDATA', 'C:\\ProgramData'), "WingetAgent")
+                logging.basicConfig(filename=os.path.join(log_dir, 'agent_cli.log'), level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+                logging.error(f"Błąd podczas trigger_report: {e}", exc_info=True)
+
+        else:
+            win32serviceutil.HandleCommandLine(AgentService)
+
     else:
-        win32serviceutil.HandleCommandLine(AgentService)
+        servicemanager.Initialize()
+        servicemanager.PrepareToHostSingle(AgentService)
+        servicemanager.StartServiceCtrlDispatcher()
