@@ -19,6 +19,22 @@ logging.basicConfig(filename=LOG_FILE, level=logging.INFO, format='%(asctime)s -
 
 HOST = '127.0.0.1'
 PORT = 61900
+IPC_TOKEN = ''
+
+
+def load_ipc_token():
+    """Wczytuje token z pliku przy starcie."""
+    global IPC_TOKEN
+    try:
+        token_path = os.path.join(os.environ.get('PROGRAMDATA', 'C:\\ProgramData'), "WingetAgent", "ipc.token")
+        if os.path.exists(token_path):
+            with open(token_path, "r") as f:
+                IPC_TOKEN = f.read().strip()
+            logging.info("Token IPC został pomyślnie wczytany.")
+        else:
+            logging.warning("Plik tokenu IPC nie istnieje. Oczekiwanie na utworzenie przez usługę.")
+    except Exception as e:
+        logging.critical(f"Nie udało się wczytać tokenu IPC: {e}")
 
 
 def show_dialog_native(data):
@@ -156,8 +172,21 @@ def handle_client(conn, addr):
             if not chunk: raise RuntimeError("Połączenie przerwane")
             chunks.append(chunk)
             bytes_recd += len(chunk)
+
         data = json.loads(b''.join(chunks).decode('utf-8'))
-        logging.info(f"Otrzymano polecenie: {data}")
+
+        if not IPC_TOKEN:
+            logging.warning("Odrzucono połączenie - token serwera nie jest załadowany.")
+            conn.close()
+            return
+
+        received_token = data.pop('token', None)
+        if not received_token or received_token != IPC_TOKEN:
+            logging.error(f"Odrzucono połączenie od {addr} z powodu nieprawidłowego tokenu IPC!")
+            conn.close()
+            return
+
+        logging.info(f"Otrzymano polecenie (po weryfikacji tokenu): {data}")
         dialog_type = data.get('type')
 
         if dialog_type == 'ping':
@@ -188,6 +217,7 @@ def handle_client(conn, addr):
 
 
 def main():
+    load_ipc_token()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
             s.bind((HOST, PORT))

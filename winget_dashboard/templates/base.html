@@ -8,6 +8,10 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 
     <script>
+        // Używamy obiektu 'config' zamiast 'current_app.config'
+        window.apiKey = "{{ config.get('API_KEY', '') }}";
+    </script>
+    <script>
         (function() {
             const theme = localStorage.getItem('theme');
             if (theme === 'dark') {

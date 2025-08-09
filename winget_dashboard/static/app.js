@@ -36,7 +36,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            fetch(`/api/task_status/${taskId}`)
+            fetch(`/api/task_status/${taskId}`, {
+                headers: { 'X-API-Key': window.apiKey }
+            })
                 .then(response => {
                     if (!response.ok) {
                         if (response.status === 404) return { status: 'zakończone' };
@@ -107,7 +109,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         fetch(apiUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-API-Key': window.apiKey
+            },
             body: JSON.stringify({ package_id: packageId, force: force })
         })
         .then(response => response.json())
@@ -162,7 +167,9 @@ document.addEventListener('DOMContentLoaded', () => {
         document.body.addEventListener('click', function(e) {
             if (e.target.matches('.details-btn')) {
                 const taskId = e.target.dataset.taskId;
-                fetch(`/api/task_status/${taskId}`)
+                fetch(`/api/task_status/${taskId}`, {
+                    headers: { 'X-API-Key': window.apiKey }
+                })
                     .then(response => response.json())
                     .then(data => {
                         if (data && data.result_details) {
@@ -195,7 +202,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const notificationBar = document.getElementById('notification-bar');
 
-            fetch(`/api/computer/${computerId}/refresh`, { method: 'POST' })
+            fetch(`/api/computer/${computerId}/refresh`, {
+                method: 'POST',
+                headers: { 'X-API-Key': window.apiKey }
+            })
                 .then(response => {
                     if (!response.ok) throw new Error('Błąd zlecenia zadania.');
                     return response.json();
@@ -263,12 +273,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
             fetch(`/api/computer/${computerId}/blacklist`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-API-Key': window.apiKey
+                },
                 body: JSON.stringify({ blacklist_keywords: keywords })
             })
             .then(response => {
                 if (!response.ok) throw new Error('Błąd zapisu czarnej listy');
-                return fetch(`/api/computer/${computerId}/refresh`, { method: 'POST' });
+                return fetch(`/api/computer/${computerId}/refresh`, {
+                    method: 'POST',
+                    headers: { 'X-API-Key': window.apiKey }
+                });
             })
             .then(response => response.json())
             .then(refreshData => {
@@ -371,7 +387,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const originalText = this.textContent;
             this.textContent = 'Wdrażanie...';
             this.disabled = true;
-            fetch('/api/agent/deploy_update', { method: 'POST' })
+            fetch('/api/agent/deploy_update', {
+                method: 'POST',
+                headers: { 'X-API-Key': window.apiKey }
+            })
                 .then(response => response.json().then(data => ({ok: response.ok, data})))
                 .then(({ok, data}) => {
                     if (!ok) throw new Error(data.message || 'Błąd serwera');
@@ -399,7 +418,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (confirm(`Czy na pewno chcesz trwale usunąć komputer "${hostname}" i całą jego historię? Tej akcji nie można cofnąć.`)) {
                 fetch(`/api/computer/${computerId}`, {
-                    method: 'DELETE'
+                    method: 'DELETE',
+                    headers: { 'X-API-Key': window.apiKey }
                 })
                 .then(response => response.json())
                 .then(data => {
@@ -435,7 +455,8 @@ document.addEventListener('DOMContentLoaded', () => {
             this.disabled = true;
 
             fetch(`/api/computer/${computerId}/update_all`, {
-                method: 'POST'
+                method: 'POST',
+                headers: { 'X-API-Key': window.apiKey }
             })
             .then(response => response.json())
             .then(data => {
@@ -459,7 +480,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!refreshBtn) return;
         const computerId = refreshBtn.dataset.computerId;
 
-        fetch(`/api/computer/${computerId}/tasks`)
+        fetch(`/api/computer/${computerId}/tasks`, {
+            headers: { 'X-API-Key': window.apiKey }
+        })
             .then(response => {
                 if (!response.ok) throw new Error('Nie udało się pobrać statusów zadań.');
                 return response.json();

@@ -98,13 +98,13 @@ def get_blacklist(hostname):
 
 
 @bp.route('/computer/<int:computer_id>/refresh', methods=['POST'])
+@require_api_key  # <--- ZABEZPIECZENIE
 def request_refresh(computer_id):
     db_manager = DatabaseManager()
     task_id = db_manager.create_task(computer_id, 'force_report', '{}')
     return jsonify({"status": "success", "message": "Zadanie odświeżenia zlecone", "task_id": task_id})
 
 
-# NOWY ENDPOINT
 @bp.route('/computer/<hostname>/trigger_report', methods=['POST'])
 @require_api_key
 def trigger_report(hostname):
@@ -119,6 +119,7 @@ def trigger_report(hostname):
 
 
 @bp.route('/computer/<int:computer_id>/tasks', methods=['GET'])
+@require_api_key  # <--- ZABEZPIECZENIE
 def get_computer_tasks(computer_id):
     db_manager = DatabaseManager()
     tasks = db_manager.get_computer_tasks(computer_id)
@@ -126,6 +127,7 @@ def get_computer_tasks(computer_id):
 
 
 @bp.route('/computer/<int:computer_id>/update', methods=['POST'])
+@require_api_key  # <--- ZABEZPIECZENIE
 def request_update(computer_id):
     data = request.get_json()
     package_id = data.get('package_id')
@@ -141,6 +143,7 @@ def request_update(computer_id):
 
 
 @bp.route('/computer/<int:computer_id>/uninstall', methods=['POST'])
+@require_api_key  # <--- ZABEZPIECZENIE
 def request_uninstall(computer_id):
     data = request.get_json()
     package_id = data.get('package_id')
@@ -156,6 +159,7 @@ def request_uninstall(computer_id):
 
 
 @bp.route('/computer/<int:computer_id>/update_os', methods=['POST'])
+@require_api_key  # <--- ZABEZPIECZENIE
 def request_os_update(computer_id):
     data = request.get_json()
     force = data.get('force', False)
@@ -170,6 +174,7 @@ def request_os_update(computer_id):
 
 
 @bp.route('/computer/<int:computer_id>/update_all', methods=['POST'])
+@require_api_key  # <--- ZABEZPIECZENIE
 def request_update_all(computer_id):
     db_manager = DatabaseManager()
     updates = db_manager.get_pending_updates_for_computer(computer_id)
@@ -201,6 +206,7 @@ def request_update_all(computer_id):
 
 
 @bp.route('/computer/<int:computer_id>/blacklist', methods=['POST'])
+@require_api_key  # <--- ZABEZPIECZENIE
 def update_blacklist(computer_id):
     data = request.get_json()
     new_blacklist_raw = data.get('blacklist_keywords', '')
@@ -216,6 +222,7 @@ def update_blacklist(computer_id):
 
 
 @bp.route('/task_status/<int:task_id>', methods=['GET'])
+@require_api_key  # <--- ZABEZPIECZENIE
 def task_status(task_id):
     db_manager = DatabaseManager()
     task = db_manager.get_task_details(task_id)
@@ -254,6 +261,7 @@ def get_latest_agent_info():
 
 
 @bp.route('/computer/<int:computer_id>/agent_update', methods=['POST'])
+@require_api_key  # <--- ZABEZPIECZENIE
 def request_agent_update(computer_id):
     version_service = AgentVersionService()
     target_version = version_service.get_server_agent_version()
@@ -271,6 +279,7 @@ def request_agent_update(computer_id):
 
 
 @bp.route('/agent/update_status', methods=['POST'])
+@require_api_key # <--- ZABEZPIECZENIE
 def agent_update_status():
     data = request.get_json()
     hostname, status = data.get('hostname'), data.get('status')
@@ -298,6 +307,7 @@ def agent_update_confirm():
 
 
 @bp.route('/agent/deploy_update', methods=['POST'])
+@require_api_key  # <--- ZABEZPIECZENIE
 def deploy_update_to_all():
     db_manager = DatabaseManager()
     computers = db_manager.get_all_computers()
@@ -325,6 +335,7 @@ def deploy_update_to_all():
 
 
 @bp.route('/computer/<int:computer_id>', methods=['DELETE'])
+@require_api_key  # <--- ZABEZPIECZENIE
 def delete_computer(computer_id):
     db_manager = DatabaseManager()
     computer = db_manager.get_computer_details_by_id(computer_id)

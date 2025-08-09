@@ -11,6 +11,7 @@ import requests
 import threading
 import struct
 import re
+import secrets
 
 import servicemanager
 import win32serviceutil
@@ -53,8 +54,20 @@ class CommandRunner:
 
 class UiClient:
     HOST = '127.0.0.1'; PORT = 61900
+    _token = ''
+
+    @staticmethod
+    def configure_token(token):
+        UiClient._token = token
+
     @staticmethod
     def send_request(request_data: dict) -> str:
+        if not UiClient._token:
+            logging.error("Brak tokenu IPC. Komunikacja z UI jest niemożliwa.")
+            return "error"
+
+        request_data['token'] = UiClient._token
+
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(3600)
@@ -667,15 +680,35 @@ class AgentService(win32serviceutil.ServiceFramework):
         win32serviceutil.ServiceFramework.__init__(self, args)
         self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)
         self.is_running = True; self.agent = None; self.last_work_time = 0
+        self.ipc_token = ''
+
     def _setup_logging(self):
         log_dir = os.path.join(os.environ.get('PROGRAMDATA', 'C:\\ProgramData'), "WingetAgent")
         os.makedirs(log_dir, exist_ok=True)
         logging.basicConfig(filename=os.path.join(log_dir, 'agent.log'), level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+    def _setup_ipc_security(self):
+        """Generuje i zapisuje token do komunikacji z ui_helper."""
+        try:
+            token_dir = os.path.join(os.environ.get('PROGRAMDATA', 'C:\\ProgramData'), "WingetAgent")
+            token_path = os.path.join(token_dir, "ipc.token")
+            self.ipc_token = secrets.token_hex(32)
+            with open(token_path, "w") as f:
+                f.write(self.ipc_token)
+            logging.info("Pomyślnie wygenerowano i zapisano token IPC.")
+        except Exception as e:
+            logging.critical(f"Nie udało się stworzyć tokenu IPC! Komunikacja z UI nie będzie możliwa. Błąd: {e}")
+            self.ipc_token = ''
+
     def SvcStop(self):
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
         win32event.SetEvent(self.hWaitStop); self.is_running = False
+
     def SvcDoRun(self):
         self._setup_logging()
+        self._setup_ipc_security()
+        UiClient.configure_token(self.ipc_token)
+
         servicemanager.LogMsg(servicemanager.EVENTLOG_INFORMATION_TYPE, servicemanager.PYS_SERVICE_STARTED, (self._svc_name_, ''))
         try:
             self.agent = Agent()
