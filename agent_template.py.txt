@@ -21,7 +21,7 @@ import pywintypes
 import winreg
 import ctypes
 
-# --- Konfiguracja wstrzykiwana (bez zmian) ---
+# --- Konfiguracja wstrzykiwana ---
 API_ENDPOINTS = [ep.strip() for ep in ["__API_ENDPOINT_1__", "__API_ENDPOINT_2__"] if ep and ep.strip()]
 API_KEY = "__API_KEY__"
 AGENT_VERSION = "__AGENT_VERSION__"
@@ -31,9 +31,8 @@ LIGHT_REPORT_INTERVAL = 300
 WINGET_PATH_CONF = r"__WINGET_PATH__"
 ERROR_DEFINITIONS_JSON = __ERROR_DEFINITIONS_JSON__
 
-# --- Klasy logiki (bez zmian) ---
-# ... (W tym miejscu znajduje się pełna, niezmieniona zawartość klas:
-# ...  CommandRunner, UiClient, ApiClient, WingetManager, SystemInfo, Agent)
+# --- Klasy logiki ---
+
 class CommandRunner:
     @staticmethod
     def run(command: str, timeout: int = 1800):
@@ -68,7 +67,6 @@ class UiClient:
             return "error"
 
         request_data['token'] = UiClient._token
-
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(3600)
@@ -125,6 +123,7 @@ class WingetManager:
     def __init__(self, agent_mode):
         self.mode = agent_mode
         logging.info(f"WingetManager zainicjowany w trybie: '{self.mode}'")
+
     def _get_winget_data_from_ui(self, command):
         request_data = {"type": "execute_command", "command": command}
         response_json_str = UiClient.send_request(request_data)
@@ -141,6 +140,7 @@ class WingetManager:
         except (json.JSONDecodeError, TypeError) as e:
             logging.error(f"Błąd przetwarzania odpowiedzi od Pomocnika UI: {e}")
             return None
+
     def _parse_text_output(self, result_obj_stdout):
         if not result_obj_stdout: return []
         apps, header_line, header_indices = [], "", {}
@@ -163,6 +163,7 @@ class WingetManager:
                 if app['name'] and app['id']: apps.append(app)
             except (ValueError, IndexError) as e: logging.warning(f"Pominięto linię winget: {line} | Błąd: {e}")
         return apps
+
     def get_installed_apps(self, blacklist):
         if self.mode == 'json':
             command = "winget list --json --accept-source-agreements --disable-interactivity"
@@ -184,11 +185,12 @@ class WingetManager:
             except (json.JSONDecodeError, AttributeError) as e:
                 logging.error(f"Błąd parsowania JSON dla 'list': {e}")
                 return []
-        else:
+        else: # Tryb 'text'
             command = "winget list --accept-source-agreements --disable-interactivity"
             winget_output = self._get_winget_data_from_ui(command)
             all_apps = self._parse_text_output(winget_output)
             return [app for app in all_apps if not any(keyword.lower() in app['name'].lower() for keyword in blacklist)]
+
     def get_available_updates(self):
         if self.mode == 'json':
             command = "winget upgrade --json --accept-source-agreements --disable-interactivity --include-unknown"
@@ -210,7 +212,7 @@ class WingetManager:
             except (json.JSONDecodeError, AttributeError) as e:
                 logging.error(f"Błąd parsowania JSON dla 'upgrade': {e}")
                 return []
-        else:
+        else: # Tryb 'text'
             command = "winget upgrade --accept-source-agreements --disable-interactivity --include-unknown"
             winget_output = self._get_winget_data_from_ui(command)
             return self._parse_text_output(winget_output)
@@ -253,6 +255,7 @@ class Agent:
         self.winget_version, self.agent_mode = self._determine_winget_mode()
         self.winget_manager = WingetManager(self.agent_mode)
         self.error_definitions = ERROR_DEFINITIONS_JSON
+
     def _run_command_as_user(self, command):
         response_str = UiClient.send_request({"type": "execute_command", "command": command})
         if response_str in ["no_response", "no_helper", "error"]:
@@ -264,6 +267,7 @@ class Agent:
         except (json.JSONDecodeError, TypeError):
             return None
         return None
+
     def _determine_winget_mode(self):
         logging.info("Sprawdzanie wersji i możliwości winget w kontekście użytkownika...")
         version_output = self._run_command_as_user("winget --version")
@@ -279,6 +283,7 @@ class Agent:
         else:
             logging.warning(f"Wykryto winget w wersji {version}, która nie wspiera --json. Agent będzie pracował w trybie rezerwowym (text).")
             return version, "text"
+
     def _ensure_ui_helper_autostart(self):
         try:
             logging.info("Weryfikacja zadania autostartu dla Pomocnika UI...")
@@ -302,117 +307,192 @@ class Agent:
                 logging.error(f"Nie udało się utworzyć zadania autostartu. Wynik: {create_result.stdout}\n{create_result.stderr}")
         except Exception as e:
             logging.error(f"Nie udało się skonfigurować autostartu dla Pomocnika UI: {e}", exc_info=True)
+
     def send_heartbeat(self):
         try:
             logging.info("Wysyłanie sygnału heartbeat (status online)...")
-            heartbeat_data = {"hostname": self.hostname, "ip_address": SystemInfo.get_active_ip(), "agent_version": self.version, "reboot_required": SystemInfo.is_reboot_required(), "winget_version": self.winget_version, "agent_mode": self.agent_mode}
+            heartbeat_data = {
+                "hostname": self.hostname,
+                "ip_address": SystemInfo.get_active_ip(),
+                "agent_version": self.version,
+                "reboot_required": SystemInfo.is_reboot_required(),
+                "winget_version": self.winget_version,
+                "agent_mode": self.agent_mode
+            }
             self.api_client.send_heartbeat(heartbeat_data)
             self.last_light_report_time = time.time()
         except Exception as e:
             logging.error(f"Błąd podczas wysyłania sygnału heartbeat: {e}")
+
     def run_full_report(self):
         try:
             logging.info("Rozpoczynanie pełnego raportu...")
             logging.info("Aktualizowanie źródeł winget...")
             self._run_command_as_user("winget source update")
             logging.info("Zakończono aktualizację źródeł winget.")
+
             self.blacklist = self.api_client.get_blacklist(self.hostname)
+
             installed_apps = self.winget_manager.get_installed_apps(self.blacklist)
             available_app_updates = self.winget_manager.get_available_updates()
+
             if not installed_apps:
                 logging.error("Nie udało się pobrać listy zainstalowanych aplikacji z Winget. Przerywam wysyłanie pełnego raportu, aby nie nadpisać stanu.")
                 self.send_heartbeat()
                 return
-            report_data = {"hostname": self.hostname, "ip_address": SystemInfo.get_active_ip(), "agent_version": self.version, "reboot_required": SystemInfo.is_reboot_required(), "installed_apps": installed_apps, "available_app_updates": available_app_updates, "pending_os_updates": SystemInfo.get_pending_os_updates(), "winget_version": self.winget_version, "agent_mode": self.agent_mode}
+
+            report_data = {
+                "hostname": self.hostname,
+                "ip_address": SystemInfo.get_active_ip(),
+                "agent_version": self.version,
+                "reboot_required": SystemInfo.is_reboot_required(),
+                "installed_apps": installed_apps,
+                "available_app_updates": available_app_updates,
+                "pending_os_updates": SystemInfo.get_pending_os_updates(),
+                "winget_version": self.winget_version,
+                "agent_mode": self.agent_mode
+            }
             self.api_client.send_report(report_data)
             self.last_full_report_time = time.time()
             self.last_light_report_time = self.last_full_report_time
         except Exception as e:
             logging.error(f"Błąd krytyczny podczas wysyłania pełnego raportu: {e}", exc_info=True)
+
     def _get_os_update_script(self):
         return """
         $updateSession = New-Object -ComObject Microsoft.Update.Session
         $updateSearcher = $updateSession.CreateUpdateSearcher()
         $searchResult = $updateSearcher.Search("IsInstalled=0 and Type='Software'").Updates
-        if ($searchResult.Count -eq 0) { msg * "Brak nowych aktualizacji systemu Windows do zainstalowania."; exit 0 }
+
+        if ($searchResult.Count -eq 0) {
+            msg * "Brak nowych aktualizacji systemu Windows do zainstalowania."
+            exit 0
+        }
+
         $updateTitles = ($searchResult | ForEach-Object { "- $($_.Title)" }) -join [System.Environment]::NewLine
         $message = "Rozpoczynam automatyczną instalację $($searchResult.Count) aktualizacji systemu Windows:" + [System.Environment]::NewLine + $updateTitles
         msg * $message
+
         Write-Host "Pobieranie..."
         $downloader = $updateSession.CreateUpdateDownloader()
         $downloader.Updates = $searchResult
         $downloader.Download()
+
         $updatesToInstall = New-Object -ComObject Microsoft.Update.UpdateColl
-        foreach ($update in $searchResult) { if ($update.IsDownloaded) { $updatesToInstall.Add($update) | Out-Null } }
-        if ($updatesToInstall.Count -eq 0) { msg * "Błąd: Aktualizacje systemu Windows zostały znalezione, ale nie udało się ich pobrać."; exit 1 }
+        foreach ($update in $searchResult) {
+            if ($update.IsDownloaded) { $updatesToInstall.Add($update) | Out-Null }
+        }
+
+        if ($updatesToInstall.Count -eq 0) {
+            msg * "Błąd: Aktualizacje systemu Windows zostały znalezione, ale nie udało się ich pobrać."
+            exit 1
+        }
+
         Write-Host "Instalowanie $($updatesToInstall.Count) aktualizacji..."
         $installer = $updateSession.CreateUpdateInstaller()
         $installer.Updates = $updatesToInstall
         $result = $installer.Install()
+
         Write-Host "Instalacja zakończona. Kod wyniku: $($result.ResultCode). Wymagany restart: $($result.RebootRequired)"
-        if ($result.RebootRequired) { msg * "Instalacja aktualizacji systemu Windows została zakończona. Komputer wymaga ponownego uruchomienia." }
-        else { msg * "Instalacja aktualizacji systemu Windows została zakończona." }
+        if ($result.RebootRequired) {
+            msg * "Instalacja aktualizacji systemu Windows została zakończona. Komputer wymaga ponownego uruchomienia."
+        } else {
+            msg * "Instalacja aktualizacji systemu Windows została zakończona."
+        }
+
         if ($result.ResultCode -ne 2) { exit 1 }
         exit 0
         """
+
     def _schedule_task_on_logon(self, task_id, base_command, payload):
-        command_to_run, task_name, agent_path = "", "", sys.executable
+        command_to_run = ""
+        task_name = ""
+        agent_path = sys.executable
+
         sanitized_app_name = ""
         if payload != 'os_update':
             app_name_guess = payload.split('.')[-1]
             sanitized_app_name = re.sub(r'[\\/:*?"<>|]', '', app_name_guess)
+
         final_command = f"; & '{agent_path}' trigger_report"
+
         if base_command in ['request_update', 'force_update']:
-            task_name, message = f"WD Agent - Aktualizacja {sanitized_app_name} (ID {task_id})", f"Rozpoczynanie automatycznej aktualizacji aplikacji: {sanitized_app_name}..."
+            task_name = f"WD Agent - Aktualizacja {sanitized_app_name} (ID {task_id})"
+            message = f"Rozpoczynanie automatycznej aktualizacji aplikacji: {sanitized_app_name}..."
             command_to_run = f"msg * '{message}'; winget update --id '{payload}' --silent --accept-package-agreements; schtasks /Delete /TN \"{task_name}\" /F" + final_command
         elif base_command in ['request_uninstall', 'force_uninstall']:
-            task_name, message = f"WD Agent - Deinstalacja {sanitized_app_name} (ID {task_id})", f"Rozpoczynanie automatycznej deinstalacji aplikacji: {sanitized_app_name}..."
+            task_name = f"WD Agent - Deinstalacja {sanitized_app_name} (ID {task_id})"
+            message = f"Rozpoczynanie automatycznej deinstalacji aplikacji: {sanitized_app_name}..."
             command_to_run = f"msg * '{message}'; winget uninstall --id '{payload}' --silent --force; schtasks /Delete /TN \"{task_name}\" /F" + final_command
         elif base_command in ['request_os_update', 'force_os_update']:
             task_name = f"WD Agent - Aktualizacja Systemu (ID {task_id})"
             command_to_run = f"{self._get_os_update_script()}; schtasks /Delete /TN \"{task_name}\" /F" + final_command
         else:
-            logging.error(f"Nieznana komenda do zaplanowania: {base_command}"); return
+            logging.error(f"Nieznana komenda do zaplanowania: {base_command}")
+            return
+
         request_data = {"type": "schedule_task", "task_name": task_name, "command": command_to_run, "trigger_type": "onlogon"}
         response_json = UiClient.send_request(request_data)
         try:
             response = json.loads(response_json)
-            if response.get('status') == 'success': self.api_client.send_task_result(task_id, 'zaplanowane_na_logowanie', response.get('details', ''))
-            else: self.api_client.send_task_result(task_id, 'błąd', f"Nie udało się zaplanować zadania: {response.get('details', '')}")
-        except (json.JSONDecodeError, TypeError) as e: self.api_client.send_task_result(task_id, 'błąd', f"Błąd przetwarzania odpowiedzi od Pomocnika UI: {e}")
+            if response.get('status') == 'success':
+                self.api_client.send_task_result(task_id, 'zaplanowane_na_logowanie', response.get('details', ''))
+            else:
+                self.api_client.send_task_result(task_id, 'błąd', f"Nie udało się zaplanować zadania: {response.get('details', '')}")
+        except (json.JSONDecodeError, TypeError) as e:
+            self.api_client.send_task_result(task_id, 'błąd', f"Błąd przetwarzania odpowiedzi od Pomocnika UI: {e}")
+
     def _perform_action_now(self, task_id, base_command, payload):
         self.api_client.send_task_result(task_id, 'w_trakcie_wykonywania')
-        final_command, action_type_for_msg = "", "operacja"
+        final_command = ""
+        action_type_for_msg = "operacja"
         if payload == 'os_update' or base_command == 'os_update':
-            action_type_for_msg, final_command = "aktualizacja systemu", self._get_os_update_script()
+            action_type_for_msg = "aktualizacja systemu"
+            final_command = self._get_os_update_script()
         elif base_command == 'update':
-            action_type_for_msg, final_command = "aktualizacja aplikacji", f"winget update --id '{payload}' --silent --accept-package-agreements --accept-source-agreements --disable-interactivity"
+            action_type_for_msg = "aktualizacja aplikacji"
+            final_command = f"winget update --id '{payload}' --silent --accept-package-agreements --accept-source-agreements --disable-interactivity"
         elif base_command == 'uninstall':
-            action_type_for_msg, final_command = "deinstalacja aplikacji", f"winget uninstall --id '{payload}' --silent --force --accept-source-agreements --disable-interactivity"
+            action_type_for_msg = "deinstalacja aplikacji"
+            final_command = f"winget uninstall --id '{payload}' --silent --force --accept-source-agreements --disable-interactivity"
         else:
-            self.api_client.send_task_result(task_id, 'błąd', f"Agent nie rozpoznał polecenia: {base_command}"); return
+            self.api_client.send_task_result(task_id, 'błąd', f"Agent nie rozpoznał polecenia: {base_command}")
+            return
+
         response_json = UiClient.send_request({"type": "execute_command", "command": final_command})
+
         if response_json in ["no_response", "no_helper", "error"]:
             details = "Pomocnik UI nie jest dostępny. Zadanie zostało automatycznie zaplanowane na następne logowanie użytkownika."
             logging.warning(details)
             action_command = base_command.replace('force_', 'request_')
-            self._schedule_task_on_logon(task_id, action_command, payload); return
+            self._schedule_task_on_logon(task_id, action_command, payload)
+            return
+
         try:
             response = json.loads(response_json)
-            status, details, task_was_successful = response.get('status'), response.get('details'), False
+            status, details = response.get('status'), response.get('details')
+            task_was_successful = False
+
             if status == 'success':
                 self.api_client.send_task_result(task_id, 'zakończone', details)
                 task_was_successful = True
             else:
-                error_handled, details_lower = False, (details or "").lower()
+                error_handled = False
+                details_lower = (details or "").lower()
                 for error_def in self.error_definitions:
                     if error_def.get("check_type") == "details_contains" and error_def.get("check_value") in details_lower:
                         logging.warning(f"Zadanie {task_id} dla '{payload}' obsłużone przez regułę '{error_def['report_status']}'")
                         self.api_client.send_task_result(task_id, error_def['report_status'], error_def['report_details'])
                         if error_def.get('notify_user'):
-                            UiClient.send_request({"type": "info", "title": error_def.get('user_title', 'Informacja'), "message": error_def.get('user_message', '').format(payload=payload)})
-                        if error_def['report_status'] == 'zakończone': task_was_successful = True
-                        error_handled = True; break
+                            UiClient.send_request({
+                                "type": "info",
+                                "title": error_def.get('user_title', 'Informacja'),
+                                "message": error_def.get('user_message', '').format(payload=payload)
+                            })
+                        if error_def['report_status'] == 'zakończone':
+                             task_was_successful = True
+                        error_handled = True
+                        break
                 if not error_handled:
                     if "application is currently running" in details_lower:
                         logging.info(f"Wykryto, że aplikacja '{payload}' jest uruchomiona. Automatycznie planuję zadanie na następne logowanie.")
@@ -425,81 +505,120 @@ class Agent:
             if task_was_successful and base_command in ['update', 'uninstall']:
                 logging.info(f"Zadanie {task_id} zakończone sukcesem. Uruchamiam pełny raport w tle w celu odświeżenia stanu.")
                 threading.Thread(target=self.run_full_report, daemon=True).start()
-        except (json.JSONDecodeError, TypeError, AttributeError) as e: self.api_client.send_task_result(task_id, 'błąd', f"Błąd wewnętrzny agenta: {e}")
+        except (json.JSONDecodeError, TypeError, AttributeError) as e:
+            self.api_client.send_task_result(task_id, 'błąd', f"Błąd wewnętrzny agenta: {e}")
+
     def _handle_interactive_task(self, task):
         task_id, command, payload = task['id'], task['command'], task['payload']
-        ping_response = UiClient.send_request({"type": "ping"})
+        request_data = {"type": "ping"}
+        ping_response = UiClient.send_request(request_data)
         if ping_response in ["no_response", "no_helper", "error"]:
             details = "Nie można wykonać zadania interaktywnego, ponieważ pomocnik UI nie jest dostępny (prawdopodobnie nikt nie jest zalogowany)."
             logging.warning(details)
-            self.api_client.send_task_result(task_id, 'niepowodzenie_brak_uzytkownika', details); return
+            self.api_client.send_task_result(task_id, 'niepowodzenie_brak_uzytkownika', details)
+            return
         try:
             self.api_client.send_task_result(task_id, 'oczekuje_na_uzytkownika')
-            if command == 'request_os_update': action_type, app_name = "aktualizacji systemu Windows", "wszystkich dostępnych aktualizacji"
-            else: action_type, app_name = ("deinstalacji" if "uninstall" in command else "aktualizacji"), f"aplikacji '{payload}'"
+            if command == 'request_os_update':
+                action_type, app_name = "aktualizacji systemu Windows", "wszystkich dostępnych aktualizacji"
+            else:
+                action_type = "deinstalacji" if "uninstall" in command else "aktualizacji"
+                app_name = f"aplikacji '{payload}'"
             request_data = {"type": "request", "title": f"Prośba o {action_type}", "message": f"Dział IT prosi o {action_type} {app_name}.", "detail": "Wybierz 'Tak', aby uruchomić teraz, lub 'Nie', aby zaplanować na następne logowanie."}
             response_json = UiClient.send_request(request_data)
             response_data = json.loads(response_json)
             user_choice = response_data.get('response')
-            if user_choice == "now": self._perform_action_now(task_id, command.replace('request_', ''), payload)
-            elif user_choice == "shutdown": self._schedule_task_on_logon(task_id, command, payload)
-            else: self.api_client.send_task_result(task_id, 'anulowane', 'Użytkownik anulował lub zamknął okno dialogowe.')
-        except Exception as e: self.api_client.send_task_result(task_id, 'błąd', f"Błąd wewnętrzny agenta: {e}")
+            if user_choice == "now":
+                action_command = command.replace('request_', '')
+                self._perform_action_now(task_id, action_command, payload)
+            elif user_choice == "shutdown":
+                self._schedule_task_on_logon(task_id, command, payload)
+            else:
+                self.api_client.send_task_result(task_id, 'anulowane', 'Użytkownik anulował lub zamknął okno dialogowe.')
+        except Exception as e:
+            self.api_client.send_task_result(task_id, 'błąd', f"Błąd wewnętrzny agenta: {e}")
+
     def _perform_self_update(self, download_url, service_framework, task=None):
         try:
-            current_agent_path, agent_dir = sys.executable, os.path.dirname(sys.executable)
-            new_agent_path, updater_path = os.path.join(agent_dir, "agent_new.exe"), os.path.join(agent_dir, "updater.exe")
+            agent_dir = os.path.dirname(sys.executable)
+            updater_path = os.path.join(agent_dir, "updater.exe")
+            update_package_path = os.path.join(agent_dir, "update_package.zip")
+
             if not os.path.exists(updater_path):
                 error_msg = "Krytyczny błąd: Nie znaleziono pliku updater.exe!"
                 logging.error(error_msg)
                 if task: self.api_client.send_task_result(task['id'], 'błąd', error_msg)
                 return
-            logging.info(f"Pobieranie nowej wersji agenta z: {download_url}")
+
+            logging.info(f"Pobieranie nowego pakietu agenta z: {download_url}")
             response = requests.get(download_url, stream=True, timeout=60)
             response.raise_for_status()
-            with open(new_agent_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192): f.write(chunk)
+            with open(update_package_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+
             logging.info("Pobieranie zakończone. Uruchamianie aktualizatora...")
             api_endpoint = self.api_client.endpoints[0]
-            command = [updater_path, str(os.getpid()), new_agent_path, current_agent_path, service_framework._svc_name_, self.hostname, api_endpoint]
+            command = [
+                updater_path,
+                '--update-from-zip',
+                update_package_path,
+                service_framework._svc_name_,
+                self.hostname,
+                api_endpoint
+            ]
             subprocess.Popen(command, creationflags=subprocess.DETACHED_PROCESS)
             service_framework.SvcStop()
         except Exception as e:
             error_msg = f"Krytyczny błąd podczas procesu aktualizacji: {e}"
             logging.error(error_msg, exc_info=True)
             if task: self.api_client.send_task_result(task['id'], 'błąd', error_msg)
+
     def _handle_self_update(self, task, service_framework):
         try:
             self.api_client.send_task_result(task['id'], 'w_trakcie_aktualizacji')
             task_payload = json.loads(task['payload'])
-            download_path, base_url = task_payload['download_path'], self.api_client.endpoints[0].strip('/')
+            download_path = task_payload['download_path']
+            base_url = self.api_client.endpoints[0].strip('/')
             full_download_url = f"{base_url}{download_path}"
             self._perform_self_update(full_download_url, service_framework, task)
         except Exception as e:
             logging.error(f"Błąd przetwarzania zadania self_update: {e}", exc_info=True)
             self.api_client.send_task_result(task['id'], 'błąd', f"Błąd agenta: {e}")
-    def check_for_self_update_on_startup(self, service_framework): pass
+
+    def check_for_self_update_on_startup(self, service_framework):
+        pass
+
     def _trigger_updater_rollback(self, service_framework):
         logging.warning("Health check nie powiódł się. Inicjowanie rollbacku...")
         try:
-            agent_dir, updater_path = os.path.dirname(sys.executable), os.path.join(os.path.dirname(sys.executable), "updater.exe")
+            agent_dir = os.path.dirname(sys.executable)
+            updater_path = os.path.join(agent_dir, "updater.exe")
             if not os.path.exists(updater_path):
-                logging.error("Nie można wykonać rollbacku - brak updater.exe!"); return
-            command = [updater_path, '--rollback', sys.executable, service_framework._svc_name_]
+                logging.error("Nie można wykonać rollbacku - brak updater.exe!")
+                return
+            command = [updater_path, '--rollback', service_framework._svc_name_]
             subprocess.Popen(command, creationflags=subprocess.DETACHED_PROCESS)
             service_framework.SvcStop()
-        except Exception as e: logging.error(f"Krytyczny błąd podczas inicjowania rollbacku: {e}")
+        except Exception as e:
+            logging.error(f"Krytyczny błąd podczas inicjowania rollbacku: {e}")
+
     def _trigger_updater_cleanup(self):
         logging.info("Health check pomyślny. Inicjowanie czyszczenia...")
         try:
-            agent_dir, updater_path = os.path.dirname(sys.executable), os.path.join(os.path.dirname(sys.executable), "updater.exe")
+            agent_dir = os.path.dirname(sys.executable)
+            updater_path = os.path.join(agent_dir, "updater.exe")
             if not os.path.exists(updater_path): return
-            command = [updater_path, '--cleanup', sys.executable]
+            command = [updater_path, '--cleanup']
             subprocess.Popen(command, creationflags=subprocess.DETACHED_PROCESS)
-        except Exception as e: logging.error(f"Błąd podczas inicjowania czyszczenia: {e}")
+        except Exception as e:
+            logging.error(f"Błąd podczas inicjowania czyszczenia: {e}")
+
     def run_post_update_health_check(self, service_framework):
-        agent_dir, flag_path = os.path.dirname(sys.executable), os.path.join(os.path.dirname(sys.executable), "health_check.flag")
-        if not os.path.exists(flag_path): return
+        agent_dir = os.path.dirname(sys.executable)
+        flag_path = os.path.join(agent_dir, "health_check.flag")
+        if not os.path.exists(flag_path):
+            return
         logging.warning("Wykryto flagę po aktualizacji. Rozpoczynanie procedury Health Check...")
         health_check_passed = False
         for i in range(12):
@@ -507,20 +626,26 @@ class Agent:
                 logging.info(f"Próba Health Check ({i+1}/12)...")
                 self.api_client.confirm_update_health(self.hostname)
                 logging.info("Health Check ZAKOŃCZONY SUKCESEM. Agent jest sprawny.")
-                health_check_passed = True; break
+                health_check_passed = True
+                break
             except Exception as e:
-                logging.warning(f"Health Check nie powiódł się: {e}. Ponawiam za 10 sekund."); time.sleep(10)
+                logging.warning(f"Health Check nie powiódł się: {e}. Ponawiam za 10 sekund.")
+                time.sleep(10)
         if health_check_passed:
             try:
                 os.remove(flag_path)
                 self._trigger_updater_cleanup()
-            except OSError as e: logging.error(f"Nie udało się usunąć flagi health_check: {e}")
+            except OSError as e:
+                logging.error(f"Nie udało się usunąć flagi health_check: {e}")
         else:
             logging.critical("Health Check ZAKOŃCZONY NIEPOWODZENIEM po wielu próbach!")
             try:
-                self.api_client._request('post', '/api/agent/update_status', data=json.dumps({'hostname': self.hostname, 'status': 'błąd_po_aktualizacji', 'details': 'Health check failed, rolling back'}))
-            except Exception as e: logging.error(f"Nie udało się wysłać finalnego statusu błędu przed rollbackiem: {e}")
+                self.api_client._request('post', '/api/agent/update_status',
+                    data=json.dumps({'hostname': self.hostname, 'status': 'błąd_po_aktualizacji', 'details': 'Health check failed, rolling back'}))
+            except Exception as e:
+                logging.error(f"Nie udało się wysłać finalnego statusu błędu przed rollbackiem: {e}")
             self._trigger_updater_rollback(service_framework)
+
     def check_and_execute_tasks(self, service_framework):
         try:
             tasks = self.api_client.get_tasks(self.hostname)
@@ -528,7 +653,8 @@ class Agent:
             for task in tasks:
                 command, task_id, payload = task['command'], task['id'], task['payload']
                 logging.info(f"Otrzymano zadanie ID {task_id}: {command}")
-                if command.startswith('request_'): threading.Thread(target=self._handle_interactive_task, args=(task,), daemon=True).start()
+                if command.startswith('request_'):
+                    threading.Thread(target=self._handle_interactive_task, args=(task,), daemon=True).start()
                 elif command == 'force_report':
                     try:
                         self.api_client.send_task_result(task_id, 'w_trakcie_wykonywania')
@@ -537,8 +663,12 @@ class Agent:
                     except Exception as e:
                         logging.error(f"Błąd podczas wykonywania zadania force_report: {e}")
                         self.api_client.send_task_result(task_id, 'błąd', f'Błąd agenta: {e}')
-                elif command.startswith('force_'): threading.Thread(target=self._perform_action_now, args=(task_id, command.replace('force_', ''), payload), daemon=True).start()
-                elif command == 'self_update': self._handle_self_update(task, service_framework); break
+                elif command.startswith('force_'):
+                    action_command = command.replace('force_', '')
+                    threading.Thread(target=self._perform_action_now, args=(task_id, action_command, payload), daemon=True).start()
+                elif command == 'self_update':
+                    self._handle_self_update(task, service_framework)
+                    break
         except Exception as e: logging.error(f"Błąd podczas przetwarzania zadań: {e}", exc_info=True)
 
 class AgentService(win32serviceutil.ServiceFramework):
@@ -601,22 +731,14 @@ class AgentService(win32serviceutil.ServiceFramework):
                     self.last_work_time = now
                     time.sleep(60)
 
-# =================================================================
-# === FINALNA, POPRAWIONA WERSJA GŁÓWNEGO BLOKU URUCHOMIENIOWEGO ===
-# =================================================================
 if __name__ == '__main__':
-    # Sprawdzamy, czy przekazano jakikolwiek argument
     if len(sys.argv) == 1:
-        # Uruchomienie bez argumentów -> start jako usługa
         servicemanager.Initialize()
         servicemanager.PrepareToHostSingle(AgentService)
         servicemanager.StartServiceCtrlDispatcher()
     else:
-        # Przechwytujemy komendę
         cmd = sys.argv[1].lower()
         agent_dir = os.path.dirname(os.path.abspath(sys.executable))
-
-        # --- Funkcje pomocnicze do zarządzania PATH ---
         def get_system_path_from_registry():
             try:
                 result = subprocess.run(
@@ -629,15 +751,10 @@ if __name__ == '__main__':
                 return ""
             except Exception:
                 return os.environ.get('PATH', '')
-
-        # --- Rozbudowana obsługa komend ---
         if cmd == 'install':
             try:
-                # Najpierw pozwalamy bibliotece pywin32 poprawnie zainstalować usługę
                 win32serviceutil.HandleCommandLine(AgentService)
                 print(f"Usługa '{AgentService._svc_display_name_}' zainstalowana pomyślnie.")
-
-                # Dopiero po sukcesie instalacji, dodajemy ścieżkę do PATH
                 current_path = get_system_path_from_registry()
                 paths = [p.strip() for p in current_path.split(';') if p.strip()]
                 if agent_dir not in paths:
@@ -645,13 +762,10 @@ if __name__ == '__main__':
                     new_path = f"{current_path};{agent_dir}"
                     subprocess.run(["setx", "PATH", new_path, "/M"], check=True, capture_output=True)
                     print("Ścieżka została pomyślnie dodana. Otwórz nowe okno konsoli, aby zmiany weszły w życie.")
-
             except Exception as e:
                 print(f"Wystąpił błąd podczas instalacji usługi: {e}")
-
         elif cmd in ['remove', 'uninstall']:
             try:
-                # Najpierw usuwamy naszą ścieżkę z PATH
                 current_path = get_system_path_from_registry()
                 paths = [p.strip() for p in current_path.split(';') if p.strip()]
                 if agent_dir in paths:
@@ -660,17 +774,12 @@ if __name__ == '__main__':
                     new_path = ';'.join(paths)
                     subprocess.run(["setx", "PATH", new_path, "/M"], check=True, capture_output=True)
                     print("Ścieżka została pomyślnie usunięta.")
-
-                # Na końcu pozwalamy bibliotece pywin32 poprawnie odinstalować usługę
                 win32serviceutil.HandleCommandLine(AgentService)
                 print(f"Usługa '{AgentService._svc_display_name_}' odinstalowana pomyślnie.")
-
             except Exception as e:
                 print(f"Wystąpił błąd podczas deinstalacji usługi: {e}")
-
         elif cmd == 'version':
             print(f"Wersja agenta Winget Dashboard: {AGENT_VERSION}")
-
         elif cmd == 'status':
             status_dict = {
                 win32service.SERVICE_STOPPED: "Zatrzymana",
@@ -686,7 +795,6 @@ if __name__ == '__main__':
                     print(f"Błąd: Usługa '{AgentService._svc_display_name_}' nie jest zainstalowana.")
                 else:
                     print(f"Wystąpił nieoczekiwany błąd: {e}")
-
         elif cmd == 'trigger_report':
             try:
                 client = ApiClient(API_ENDPOINTS, API_KEY)
@@ -696,8 +804,5 @@ if __name__ == '__main__':
                 log_dir = os.path.join(os.environ.get('PROGRAMDATA', 'C:\\ProgramData'), "WingetAgent")
                 logging.basicConfig(filename=os.path.join(log_dir, 'agent_cli.log'), level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
                 logging.error(f"Błąd podczas trigger_report: {e}", exc_info=True)
-
         else:
-            # Dla wszystkich innych komend (start, stop, restart, debug)
-            # w 100% oddajemy kontrolę niezawodnej funkcji z biblioteki.
             win32serviceutil.HandleCommandLine(AgentService)

@@ -7,6 +7,7 @@ import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from flask import current_app
+import zipfile
 
 
 class AgentVersionService:
@@ -70,47 +71,78 @@ class AgentVersionService:
 
 
 class AgentGenerator:
-    """Klasa odpowiedzialna za generowanie pliku agent.exe."""
+    """Klasa odpowiedzialna za generowanie PEŁNEGO PAKIETU agenta."""
 
     def __init__(self, template_content):
         self.template = template_content
 
-    def generate_exe(self, config: dict):
+    def generate_agent_bundle(self, config: dict):
+        """Generuje agent.exe, ui_helper.exe, updater.exe i pakuje je do ZIP."""
         if not shutil.which("pyinstaller"):
             raise FileNotFoundError("PyInstaller nie jest dostępny na serwerze.")
 
-        agent_version = config.get('agent_version', '0.0.0')
-        winget_path = config.get('winget_path', '').replace('\\', '\\\\')
-
-        try:
-            error_definitions_path = os.path.join(current_app.root_path, '..', 'error_definitions.json')
-            with open(error_definitions_path, 'r', encoding='utf-8') as f:
-                errors_obj = json.load(f)
-                # Konwertujemy obiekt Pythona na jego reprezentację tekstową w kodzie
-                errors_code_string = str(errors_obj)
-        except (FileNotFoundError, json.JSONDecodeError) as e:
-            logging.error(f"Nie udało się załadować pliku error_definitions.json: {e}")
-            errors_code_string = "[]"
-
-        final_agent_code = self.template \
-            .replace('__API_ENDPOINT_1__', config.get('api_endpoint_1', '')) \
-            .replace('__API_ENDPOINT_2__', config.get('api_endpoint_2', '')) \
-            .replace('__API_KEY__', config.get('api_key', '')) \
-            .replace('__AGENT_VERSION__', agent_version) \
-            .replace('__LOOP_INTERVAL__', str(config.get('loop_interval', 60))) \
-            .replace('__REPORT_INTERVAL__', str(config.get('report_interval', 3600))) \
-            .replace('__WINGET_PATH__', winget_path) \
-            .replace('__ERROR_DEFINITIONS_JSON__', errors_code_string)
-
         build_dir = tempfile.mkdtemp(prefix="winget-agent-build-")
-        script_path = os.path.join(build_dir, "agent_service.py")
-        with open(script_path, "w", encoding="utf-8") as f:
-            f.write(final_agent_code)
 
-        command = ["pyinstaller", "--onefile", "--hidden-import=win32timezone", "--name", "agent", script_path]
         try:
-            subprocess.run(command, check=True, capture_output=True, text=True, encoding='utf-8', cwd=build_dir)
-            return os.path.join(build_dir, 'dist', 'agent.exe')
+            # --- Przygotowanie plików źródłowych ---
+            agent_version = config.get('agent_version', '0.0.0')
+
+            source_dir = os.path.join(current_app.root_path, '..')
+            shutil.copy(os.path.join(source_dir, 'ui_helper.py'), build_dir)
+            shutil.copy(os.path.join(source_dir, 'updater.py'), build_dir)
+
+            try:
+                error_definitions_path = os.path.join(source_dir, 'error_definitions.json')
+                with open(error_definitions_path, 'r', encoding='utf-8') as f:
+                    errors_obj = json.load(f)
+                    errors_code_string = str(errors_obj)
+            except (FileNotFoundError, json.JSONDecodeError) as e:
+                logging.error(f"Nie udało się załadować pliku error_definitions.json: {e}")
+                errors_code_string = "[]"
+
+            final_agent_code = self.template \
+                .replace('__API_ENDPOINT_1__', config.get('api_endpoint_1', '')) \
+                .replace('__API_ENDPOINT_2__', config.get('api_endpoint_2', '')) \
+                .replace('__API_KEY__', config.get('api_key', '')) \
+                .replace('__AGENT_VERSION__', agent_version) \
+                .replace('__LOOP_INTERVAL__', str(config.get('loop_interval', 60))) \
+                .replace('__REPORT_INTERVAL__', str(config.get('report_interval', 3600))) \
+                .replace('__WINGET_PATH__', config.get('winget_path', '').replace('\\', '\\\\')) \
+                .replace('__ERROR_DEFINITIONS_JSON__', errors_code_string)
+
+            script_path = os.path.join(build_dir, "agent_service.py")
+            with open(script_path, "w", encoding="utf-8") as f:
+                f.write(final_agent_code)
+
+            # --- Uruchomienie PyInstaller dla wszystkich komponentów ---
+            logging.info("Rozpoczynanie budowania pakietu agenta...")
+            common_args = ["--onefile", "--hidden-import=win32timezone"]
+
+            # Agent i updater jako aplikacje konsolowe (bez okna)
+            subprocess.run(["pyinstaller", *common_args, "--name", "agent", "agent_service.py"], check=True,
+                           capture_output=True, text=True, cwd=build_dir)
+            logging.info("agent.exe zbudowany pomyślnie.")
+            subprocess.run(["pyinstaller", *common_args, "--name", "updater", "updater.py"], check=True,
+                           capture_output=True, text=True, cwd=build_dir)
+            logging.info("updater.exe zbudowany pomyślnie.")
+
+            # UI Helper jako aplikacja bez konsoli (windowed)
+            subprocess.run(["pyinstaller", *common_args, "--windowed", "--name", "ui_helper", "ui_helper.py"],
+                           check=True, capture_output=True, text=True, cwd=build_dir)
+            logging.info("ui_helper.exe zbudowany pomyślnie.")
+
+            # --- Pakowanie do pliku ZIP ---
+            dist_dir = os.path.join(build_dir, 'dist')
+            zip_path = os.path.join(build_dir, f"WingetAgent_v{agent_version}.zip")
+
+            with zipfile.ZipFile(zip_path, 'w') as zf:
+                zf.write(os.path.join(dist_dir, 'agent.exe'), arcname='agent.exe')
+                zf.write(os.path.join(dist_dir, 'ui_helper.exe'), arcname='ui_helper.exe')
+                zf.write(os.path.join(dist_dir, 'updater.exe'), arcname='updater.exe')
+
+            logging.info(f"Stworzono pakiet wdrożeniowy: {zip_path}")
+            return zip_path
+
         except subprocess.CalledProcessError as e:
             logging.error(f"Błąd kompilacji PyInstaller: {e.stderr}")
             raise
@@ -141,7 +173,6 @@ class ReportGenerator:
         report_info, apps, updates = details['report'], details['apps'], details['updates']
         hostname, ip_address = report_info['hostname'], report_info['ip_address']
         content = [f"# RAPORT DLA KOMPUTERA: {hostname} ({ip_address})"]
-
         report_time = report_info['report_timestamp'] if 'report_timestamp' in report_info.keys() else report_info[
             'last_report']
         content.append(f"Data raportu: {self._to_local_time(report_time)}")

@@ -1,4 +1,5 @@
-# Plik: updater.py (wersja z obsługą backupu, rollbacku i ujednoliconym logowaniem)
+# Plik: updater.py
+
 import sys
 import os
 import shutil
@@ -6,8 +7,9 @@ import time
 import subprocess
 import json
 import logging
+import zipfile
+import tempfile
 
-# Konfiguracja logowania - ZAPIS DO C:\ProgramData\WingetAgent\updater.log
 LOG_DIR = os.path.join(os.environ.get('PROGRAMDATA', 'C:\\ProgramData'), "WingetAgent")
 os.makedirs(LOG_DIR, exist_ok=True)
 logging.basicConfig(
@@ -52,107 +54,130 @@ def run_command(command):
         logging.info(f"Polecenie zakończone sukcesem. Wynik: {result.stdout}")
         return True
     except subprocess.CalledProcessError as e:
-        logging.error(f"Błąd wykonania polecenia: {e.stderr}")
+        logging.error(f"Błąd wykonania polecenia: {e.stderr if e.stderr else e.stdout}")
         return False
     except Exception as e:
         logging.error(f"Krytyczny błąd wykonania polecenia: {e}")
         return False
 
 
-def do_update(args):
-    service_pid_str, new_agent_path, current_agent_path, service_name, hostname, api_endpoint = args
-    backup_path = current_agent_path + ".bak"
-    flag_path = os.path.join(os.path.dirname(current_agent_path), "health_check.flag")
+def do_update(zip_path, service_name, hostname, api_endpoint):
+    agent_dir = os.path.dirname(os.path.abspath(sys.executable))
+    files_to_update = ["agent.exe", "ui_helper.exe"]  # updater.exe na razie nie aktualizujemy
+    flag_path = os.path.join(agent_dir, "health_check.flag")
 
-    logging.info(f"Rozpoczynanie procesu aktualizacji dla usługi '{service_name}'...")
-    logging.info(f"Oczekiwanie 10 sekund na zamknięcie starej usługi (PID: {service_pid_str})...")
-    time.sleep(10)
+    logging.info(f"Rozpoczynanie procesu aktualizacji z pliku {zip_path}...")
+
+    logging.info("Oczekiwanie 5 sekund na całkowite zamknięcie starej usługi...")
+    time.sleep(5)
 
     try:
-        # 1. Utwórz backup starego agenta
-        if os.path.exists(current_agent_path):
-            logging.info(f"Tworzenie kopii zapasowej: {current_agent_path} -> {backup_path}")
-            shutil.move(current_agent_path, backup_path)
+        # Krok 1: Utwórz backupy
+        for filename in files_to_update:
+            current_path = os.path.join(agent_dir, filename)
+            backup_path = current_path + ".bak"
+            if os.path.exists(current_path):
+                logging.info(f"Tworzenie kopii zapasowej: {current_path} -> {backup_path}")
+                shutil.copy(current_path, backup_path)
 
-        # 2. Wgraj nowego agenta
-        logging.info(f"Instalowanie nowej wersji: {new_agent_path} -> {current_agent_path}")
-        shutil.move(new_agent_path, current_agent_path)
+        # Krok 2: Rozpakuj i wgraj nowe pliki
+        with tempfile.TemporaryDirectory() as temp_dir:
+            logging.info(f"Rozpakowywanie archiwum do: {temp_dir}")
+            with zipfile.ZipFile(zip_path, 'r') as zf:
+                zf.extractall(temp_dir)
 
-        # 3. Utwórz flagę dla health check
+            for filename in files_to_update:
+                source_path = os.path.join(temp_dir, filename)
+                dest_path = os.path.join(agent_dir, filename)
+                if os.path.exists(source_path):
+                    logging.info(f"Instalowanie nowej wersji: {source_path} -> {dest_path}")
+                    shutil.move(source_path, dest_path)
+                else:
+                    logging.warning(f"Pliku {filename} nie znaleziono w archiwum ZIP. Pomijanie.")
+
+        # Krok 3: Utwórz flagę dla health check
         logging.info(f"Tworzenie flagi health check: {flag_path}")
         with open(flag_path, "w") as f:
             f.write("1")
 
-        # 4. Uruchom nową usługę
+        # Krok 4: Usuń pobrany plik ZIP
+        os.remove(zip_path)
+
+        # Krok 5: Uruchom nową usługę
         if run_command(["sc", "start", service_name]):
             logging.info("Aktualizacja (krok plikowy) zakończona. Agent uruchomiony w trybie weryfikacji.")
             report_status(api_endpoint, hostname, "sukces_oczekuje_na_potwierdzenie")
-            return True
         else:
             raise RuntimeError("Nie udało się uruchomić nowej wersji usługi.")
 
     except Exception as e:
         logging.critical(f"Krytyczny błąd podczas aktualizacji: {e}. Próba wykonania rollbacku...")
-        # Automatyczny rollback w razie błędu na tym etapie
-        if os.path.exists(backup_path):
-            logging.info("Przywracanie agenta z kopii zapasowej...")
-            shutil.move(backup_path, current_agent_path)
-            run_command(["sc", "start", service_name])
-        report_status(api_endpoint, hostname, "błąd", str(e))
-        return False
+        do_rollback(service_name, from_update_failure=True)
+        report_status(api_endpoint, hostname, "błąd", f"Krytyczny błąd aktualizatora: {e}")
 
 
-def do_rollback():
-    # Argumenty dla rollbacku: sciezka_do_agenta nazwa_uslugi
-    if len(sys.argv) < 4:
-        logging.error("Niewystarczająca liczba argumentów dla rollbacku.")
-        return
-
-    current_agent_path = sys.argv[2]
-    service_name = sys.argv[3]
-    backup_path = current_agent_path + ".bak"
-    flag_path = os.path.join(os.path.dirname(current_agent_path), "health_check.flag")
+def do_rollback(service_name, from_update_failure=False):
+    agent_dir = os.path.dirname(os.path.abspath(sys.executable))
+    files_to_update = ["agent.exe", "ui_helper.exe"]
+    flag_path = os.path.join(agent_dir, "health_check.flag")
 
     logging.warning("Inicjowanie procedury ROLLBACK!")
-    run_command(["sc", "stop", service_name])
-    time.sleep(5)
+    if not from_update_failure:
+        run_command(["sc", "stop", service_name])
+        time.sleep(5)
 
-    if not os.path.exists(backup_path):
-        logging.error("Brak pliku kopii zapasowej! Nie można wykonać rollbacku.")
-        return
+    rollback_success = True
+    for filename in files_to_update:
+        current_path = os.path.join(agent_dir, filename)
+        backup_path = current_path + ".bak"
+        if not os.path.exists(backup_path):
+            logging.error(f"Brak pliku kopii zapasowej dla {filename}! Nie można w pełni przywrócić stanu.")
+            rollback_success = False
+            continue
 
-    if os.path.exists(current_agent_path):
-        os.remove(current_agent_path)
+        if os.path.exists(current_path):
+            os.remove(current_path)
 
-    shutil.move(backup_path, current_agent_path)
-    logging.info("Stara wersja agenta została przywrócona.")
+        shutil.move(backup_path, current_path)
+        logging.info(f"Plik {filename} został przywrócony z kopii zapasowej.")
 
     if os.path.exists(flag_path):
         os.remove(flag_path)
 
-    run_command(["sc", "start", service_name])
-    logging.info("Usługa została uruchomiona na przywróconej wersji.")
+    if rollback_success:
+        run_command(["sc", "start", service_name])
+        logging.info("Usługa została uruchomiona na przywróconej wersji.")
+    else:
+        logging.critical("Rollback nie powiódł się w pełni. System może być w stanie niestabilnym!")
 
 
 def do_cleanup():
-    current_agent_path = sys.argv[2]
-    backup_path = current_agent_path + ".bak"
-    logging.info(f"Rozpoczynanie czyszczenia po aktualizacji. Usuwanie pliku: {backup_path}")
-    if os.path.exists(backup_path):
-        try:
-            os.remove(backup_path)
-            logging.info("Plik kopii zapasowej został pomyślnie usunięty.")
-        except Exception as e:
-            logging.error(f"Nie udało się usunąć pliku kopii zapasowej: {e}")
+    agent_dir = os.path.dirname(os.path.abspath(sys.executable))
+    files_to_update = ["agent.exe", "ui_helper.exe"]
+    logging.info("Rozpoczynanie czyszczenia po pomyślnej aktualizacji.")
+
+    for filename in files_to_update:
+        backup_path = os.path.join(agent_dir, filename + ".bak")
+        if os.path.exists(backup_path):
+            try:
+                os.remove(backup_path)
+                logging.info(f"Plik kopii zapasowej {backup_path} został usunięty.")
+            except Exception as e:
+                logging.error(f"Nie udało się usunąć pliku kopii zapasowej {backup_path}: {e}")
 
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == '--rollback':
-        do_rollback()
+        service_name = sys.argv[2] if len(sys.argv) > 2 else "WingetDashboardAgent"
+        do_rollback(service_name)
     elif len(sys.argv) > 1 and sys.argv[1] == '--cleanup':
         do_cleanup()
-    elif len(sys.argv) == 7:
-        do_update(sys.argv[1:])
+    elif len(sys.argv) > 1 and sys.argv[1] == '--update-from-zip':
+        if len(sys.argv) < 6:
+            logging.error("Niewystarczająca liczba argumentów dla aktualizacji z ZIP.")
+            sys.exit(1)
+        zip_path, service_name, hostname, api_endpoint = sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
+        do_update(zip_path, service_name, hostname, api_endpoint)
     else:
-        logging.error(f"Nieprawidłowa liczba argumentów: {len(sys.argv) - 1}. Oczekiwano 2, 3 lub 6.")
+        logging.error(f"Nieprawidłowe polecenie lub liczba argumentów: {sys.argv}")
         sys.exit(1)

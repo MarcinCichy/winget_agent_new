@@ -42,8 +42,6 @@
                     <input type="text" id="api_key" name="api_key" value="{{ server_api_key }}" required>
                     <small>Klucz API musi być identyczny jak ten w pliku .env serwera.</small>
                 </div>
-
-                {# --- TUTAJ SĄ PRZYWRÓCONE, BRAKUJĄCE POLA --- #}
                 <div class="form-group">
                     <label for="winget_path">Alternatywna ścieżka do winget.exe (opcjonalnie):</label>
                     <input type="text" id="winget_path" name="winget_path" value="">
@@ -60,7 +58,7 @@
                     <small>Co ile sekund agent ma wysyłać pełny raport o stanie.</small>
                 </div>
 
-                <button id="generate-agent-btn" type="submit" class="action-btn btn-report">Generuj agent.exe</button>
+                <button id="generate-agent-btn" type="submit" class="action-btn btn-report">Generuj pakiet (.zip)</button>
             </form>
         </div>
 
@@ -74,23 +72,23 @@
                         <strong>Data modyfikacji pliku .exe:</strong> {{ server_agent_info.modified_date }}
                     </p>
                 {% else %}
-                    <p class="status-fail">Na serwerze nie ma jeszcze pliku agent.exe. Wgraj go poniżej, aby rozpocząć.</p>
+                    <p class="status-fail">Na serwerze nie ma jeszcze wgranego pakietu agenta. Wgraj go poniżej, aby rozpocząć.</p>
                 {% endif %}
             </div>
 
             <div class="update-section">
-                <h3>Krok 1: Wgraj Nową Wersję Agenta</h3>
-                <p>Podaj numer wersji zgodny z wgrywanym plikiem `agent.exe`.</p>
+                <h3>Krok 1: Wgraj Nowy Pakiet Agenta</h3>
+                <p>Podaj numer wersji zgodny z wgrywanym pakietem <strong>.zip</strong>.</p>
                 <form action="{{ url_for('views.settings') }}" method="POST" enctype="multipart/form-data" class="settings-form">
                     <div class="form-group">
                         <label for="new_version">Nowy numer wersji:</label>
                         <input type="text" id="new_version" name="new_version" value="{{ suggested_next_version }}" required>
                     </div>
                     <div class="form-group">
-                        <label>Wybierz plik agent.exe:</label>
+                        <label>Wybierz pakiet wdrożeniowy (.zip):</label>
                         <div class="file-upload-container">
-                            <label for="agent_file_input" class="action-btn btn-secondary">Wybierz agenta</label>
-                            <input type="file" id="agent_file_input" name="agent_file" accept=".exe" required class="file-upload-input">
+                            <label for="agent_file_input" class="action-btn btn-secondary">Wybierz pakiet</label>
+                            <input type="file" id="agent_file_input" name="agent_file" accept=".zip" required class="file-upload-input">
                             <span id="file-chosen-label" class="file-upload-label">Nie wybrano pliku.</span>
                         </div>
                     </div>

